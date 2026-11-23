@@ -6,7 +6,8 @@
 #   make run          boot it in QEMU, console on this terminal (Ctrl-A X quits)
 #   make run-gui      boot it in a QEMU window (the screen the display server
 #                     will draw on)
-#   make run-netbook  boot it in QEMU dressed as the HP Mini 210
+#   make run-netbook  boot it in QEMU dressed as the HP Mini 210-1001sa
+#                     (SLOW=1: at about its speed)
 #   make DEBUG=1 run  include BusyBox: a shell when the session ends
 #
 #   make menuconfig   change kernel options (copy keepers to config/kernel.config)
@@ -173,11 +174,19 @@ run: all
 run-gui: all
 	$(QEMU) $(QEMU_FLAGS) -vga std -serial stdio -append "console=ttyS0 console=tty1 $(APPEND)"
 
-# QEMU dressed as the HP Mini 210 (Atom N450, 2 GB, SeaBIOS, 1024x600 VGA,
-# EHCI, PS/2): see scripts/qemu-netbook.sh. Loads the kernel directly until
-# there is a USB stick image; then `scripts/qemu-netbook.sh --usb IMAGE`.
+# QEMU dressed as the HP Mini 210-1001sa (Atom N450, 1 GB, SeaBIOS, 1024x600
+# VGA, EHCI, PS/2): see scripts/qemu-netbook.sh. Loads the kernel directly
+# until there is a USB stick image; then `scripts/qemu-netbook.sh --usb IMAGE`.
+#
+#   SLOW=1   about the netbook's speed (KVM capped at 8% of a core);
+#   SLOW=12  the same with another percentage, while calibrating
+#   MEMORY=2G  RAM, for a netbook with its memory upgraded
+SLOW   ?=
+MEMORY ?= 1G
+NETBOOK_SLOW := $(if $(filter 1 yes,$(SLOW)),--slow,$(if $(SLOW),--slow=$(SLOW)))
 run-netbook: all
-	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) --append "$(APPEND)"
+	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) \
+		--memory $(MEMORY) $(NETBOOK_SLOW) --append "$(APPEND)"
 
 # ---------------------------------------------------------------------------
 

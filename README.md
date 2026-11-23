@@ -43,7 +43,8 @@ Then:
 | `make` | download and build the kernel, build init and the session (`../saule-wm`, else `session/`), pack the initramfs |
 | `make run` | boot in QEMU on this terminal (`Ctrl-A X` quits QEMU) |
 | `make run-gui` | boot in a QEMU window: the screen the display server will draw on |
-| `make run-netbook` | boot in QEMU dressed as the HP Mini 210 (N450, 2 GB, SeaBIOS, 1024×600, USB 2.0, PS/2): `scripts/qemu-netbook.sh` |
+| `make run-netbook` | boot in QEMU dressed as the HP Mini 210-1001sa (N450, 1 GB, SeaBIOS, 1024×600, USB 2.0, PS/2, a USB tablet as the pointer), with KVM when available: `scripts/qemu-netbook.sh` |
+| `make SLOW=1 run-netbook` | the same at about the netbook's speed: KVM capped at 8% of one core (an estimate; `SLOW=12` sets another percentage). Calibrate with `examples/bench` |
 | `make DEBUG=1 run` | add BusyBox at `/bin`: a shell when the session ends |
 | `make APP=examples/compositor-demo APPS="examples/shine-demo" run-netbook` | a session plus apps, each built into `/bin/apps/<name>` |
 | `make TOOLS=0 …` | leave out the command-line tools (BusyBox in `/usr/bin`, there by default for a terminal app's shell) |

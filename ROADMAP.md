@@ -36,7 +36,8 @@ with Claude's guidance.
 ## Phase 1: a real distro 🦀
 
 The bootable stick waits: everything is developed in QEMU for now
-(`make run-netbook` dresses QEMU as the HP Mini 210).
+(`make run-netbook` dresses QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it
+at about its speed).
 
 - [ ] **`make image`**: build the initramfs *into* the kernel
       (`CONFIG_INITRAMFS_SOURCE`) so the whole system is one

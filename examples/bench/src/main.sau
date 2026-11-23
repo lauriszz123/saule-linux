@@ -1,0 +1,73 @@
+--[[
+A fixed amount of work, timed: what the netbook profile's speed setting is
+calibrated against. Run it on the real HP Mini and in QEMU, and compare.
+
+  make APP=examples/bench run-netbook    (prints on the serial console)
+  saule run examples/bench               (on this machine, for reference)
+
+Two numbers, each the best of three runs so a hiccup doesn't count:
+  compute  Saule code alone: arithmetic, tables and strings
+  draw     Shine drawing a UI-like frame: rectangles and text, no waiting
+]]
+from shine import Graphics, Timer, Window
+
+class Main
+  static fn main()
+    Window.create(title: "bench")
+    Window.setTargetFPS(0)
+
+    local compute = Main.best(Main.compute)
+    local draw = Main.best(Main.draw)
+
+    printf("bench: compute %d ms, draw %d ms\n", compute, draw)
+    Window.close()
+  end
+
+  -- The fastest of three runs of `work`, in milliseconds.
+  static fn best(work: fn() -> nil) -> integer
+    local fastest = 1e9
+    for i = 1, 3 do
+      local start = Timer.getTime()
+      work()
+      local took = (Timer.getTime() - start) * 1000.0
+      if took < fastest then
+        fastest = took
+      end
+    end
+    return Math.floor(fastest)
+  end
+
+  static fn compute()
+    local sum = 0
+    for i = 1, 5000000 do
+      sum = (sum + i * i) % 1000003
+    end
+
+    local words: table<string> = {}
+    for i = 1, 50000 do
+      Table.insert(words, "word" .. tostring(i % 97))
+    end
+    local counts: table<string, integer> = {}
+    for w in words do
+      counts[w] = (counts[w] ?? 0) + 1
+    end
+  end
+
+  static fn draw()
+    for frame = 1, 30 do
+      Graphics.clear(.12, .13, .16)
+      for row = 0, 24 do
+        local y = (row * 24) as float
+        Graphics.setColor(.20, .22, .27)
+        Graphics.rectangle("fill", 8.0, y, 1008.0, 20.0, 4.0)
+        Graphics.setColor(.90, .90, .92)
+        Graphics.print(
+          "Row " .. tostring(row) .. " of the frame " .. tostring(frame),
+          16.0,
+          y + 2.0
+        )
+      end
+      Graphics.present()
+    end
+  end
+end
