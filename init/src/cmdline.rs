@@ -12,6 +12,8 @@ pub enum OnExit {
 pub struct Cmdline {
     /// The executable started as the session.
     pub session: String,
+    /// The account the session runs as (`/etc/passwd`).
+    pub user: String,
     pub on_exit: OnExit,
 }
 
@@ -24,6 +26,7 @@ impl Cmdline {
     fn parse(text: &str) -> Cmdline {
         let mut cmdline = Cmdline {
             session: "/bin/session".into(),
+            user: "display".into(),
             on_exit: if crate::session::has_shell() {
                 OnExit::Shell
             } else {
@@ -38,6 +41,7 @@ impl Cmdline {
 
             match key {
                 "saule.session" => cmdline.session = value.into(),
+                "saule.user" => cmdline.user = value.into(),
                 "saule.on_exit" => match value {
                     "poweroff" => cmdline.on_exit = OnExit::PowerOff,
                     "reboot" => cmdline.on_exit = OnExit::Reboot,

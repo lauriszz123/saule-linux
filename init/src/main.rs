@@ -5,7 +5,8 @@
 //! 1. mount the kernel's file systems (`/proc`, `/sys`, `/dev`, …);
 //! 2. give the machine its name and print the banner;
 //! 3. start the **session** — `/bin/session`, a Saule program built with
-//!    `saule build` — and keep it going;
+//!    `saule build` — as the unprivileged `display` account, with the screen
+//!    and input devices handed to it (`seat.rs`), and keep it going;
 //! 4. reap every orphaned process (PID 1 inherits them all);
 //! 5. power off or reboot cleanly when asked.
 //!
@@ -15,15 +16,19 @@
 //! Kernel command line options (see `cmdline.rs`):
 //!
 //!   saule.session=PATH      the executable to run as the session
+//!   saule.user=NAME         the account it runs as (default: display;
+//!                           `root` only when asked for)
 //!   saule.on_exit=shell     what to do when the session returns:
 //!                           poweroff | reboot | restart | shell
 //!                           (default: shell when /bin/sh exists, else poweroff)
 
+mod account;
 mod cmdline;
 mod console;
 mod log;
 mod mounts;
 mod power;
+mod seat;
 mod session;
 
 use cmdline::Cmdline;
@@ -37,6 +42,7 @@ fn main() {
     mounts::mount_system();
     console::attach();
     power::install_signal_handlers();
+    seat::start();
 
     let cmdline = Cmdline::read();
     set_hostname();

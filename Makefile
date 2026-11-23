@@ -25,7 +25,10 @@ DEBUG          ?= 0
 SAULE   ?= $(shell command -v saule)
 BUSYBOX ?= $(shell command -v busybox)
 QEMU    ?= qemu-system-x86_64
-APP     ?= session
+# The session: the window manager when ../saule-wm is there, the hello-world
+# in session/ otherwise. APP=… boots any other project.
+WM      ?= ../saule-wm
+APP     ?= $(if $(wildcard $(WM)/saule.config),$(WM),session)
 # Further Saule projects to build into the image as /bin/apps/<name>, for the
 # session to start — the apps under a display server.
 APPS    ?=
@@ -85,8 +88,8 @@ endif
 
 ifeq ($(HOST_OS),Darwin)
 
-# APP and APPS must be inside this repo: only the repo, ../saule and
-# ../saule-shine reach the container.
+# APP and APPS must be inside this repo or ../saule-wm: only those, ../saule
+# and ../saule-shine reach the container.
 all kernel init session initramfs menuconfig check-config:
 	scripts/docker.sh make $@ DEBUG=$(DEBUG) TOOLS=$(TOOLS) APP=$(APP) APPS="$(APPS)" KERNEL_VERSION=$(KERNEL_VERSION)
 

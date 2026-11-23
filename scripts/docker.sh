@@ -17,6 +17,8 @@
 #       run one command in the container, in the repo
 #
 #   SAULE_SRC   the saule repo to build `saule` from (default: ../saule)
+#   WM_SRC      the window manager (default: ../saule-wm; skipped if
+#               missing), built as the session when it's there
 #   SHINE_SRC   the Shine repo (default: ../saule-shine; skipped if missing).
 #               It is built from a copy, against SAULE_SRC's saule-sdk, so
 #               its native ABI matches the saule it runs in and its
@@ -44,6 +46,12 @@ shine=()
 if [ -d "$SHINE_SRC" ]; then
     shine=(-v "$(cd "$SHINE_SRC" && pwd):/src/saule-shine:ro")
 fi
+# The window manager, at the same ../saule-wm the Makefile looks for.
+WM_SRC=${WM_SRC:-$repo/../saule-wm}
+wm=()
+if [ -d "$WM_SRC" ]; then
+    wm=(-v "$(cd "$WM_SRC" && pwd):/src/saule-wm:ro")
+fi
 
 docker info >/dev/null 2>&1 || {
     echo "docker.sh: no Docker engine running (on a Mac: \`colima start\` or open Docker Desktop)" >&2
@@ -68,6 +76,7 @@ run() {
         -v saule-linux-build:/src/saule-linux/build \
         -v saule-linux-target:/target \
         ${shine[@]+"${shine[@]}"} \
+        ${wm[@]+"${wm[@]}"} \
         -v saule-linux-cargo:/opt/cargo/registry \
         -e CARGO_TARGET_DIR=/target \
         -e SAULE_HOME=/target/saule-home \

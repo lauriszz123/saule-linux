@@ -9,7 +9,7 @@ that apps run inside it unchanged; the real window manager is yours.
 On Saule Linux it starts everything in /bin/apps. Ctrl-Alt-Q quits.
 DEMO_SNAPSHOT=file.png saves the first window's picture once it has drawn.
 ]]
-from shine import Compositor, Graphics, Window
+from shine import Compositor, Graphics, Window, WindowEventKind
 
 enum Input
   KeyPressed(key: string, shift: boolean, ctrl: boolean, alt: boolean),
@@ -78,37 +78,37 @@ class Main
 
     while running and Window.isOpen() do
       local changed = false
-      for r: table in Compositor.poll() do
-        local kind = tostring(r[1])
-        local id = r[2] as integer ?? 0
-        if kind == "opened" then
-          println("compositor: window " .. tostring(id) .. " opened: " .. tostring(r[3]))
-          Table.insert(tiles, Tile(id))
-          focused = id
-          changed = true
-        elseif kind == "closed" then
-          println("compositor: window " .. tostring(id) .. " closed")
-          for i = #tiles, 1, -1 do
-            if tiles[i].id == id then
-              Table.remove(tiles, i)
+      for ev in Compositor.poll() do
+        match ev.kind
+          case WindowEventKind.Opened then
+            println("compositor: window " .. tostring(ev.id) .. " opened: " .. ev.title)
+            Table.insert(tiles, Tile(ev.id))
+            focused = ev.id
+            changed = true
+          case WindowEventKind.Closed then
+            println("compositor: window " .. tostring(ev.id) .. " closed")
+            for i = #tiles, 1, -1 do
+              if tiles[i].id == ev.id then
+                Table.remove(tiles, i)
+              end
             end
-          end
-          if focused == id then
-            focused = 0
-            if #tiles > 0 then
-              focused = tiles[#tiles].id
+            if focused == ev.id then
+              focused = 0
+              if #tiles > 0 then
+                focused = tiles[#tiles].id
+              end
             end
-          end
-          changed = true
-        elseif kind == "frame" then
-          frames = frames + 1
-          if snapshot != nil and frames == 30 then
-            local img = Compositor.image(id)
-            if img != nil then
-              img!.save(snapshot!)
-              println("compositor: saved window " .. tostring(id) .. " (" .. tostring(img!.getWidth()) .. "x" .. tostring(img!.getHeight()) .. ")")
+            changed = true
+          case WindowEventKind.Frame then
+            frames = frames + 1
+            if snapshot != nil and frames == 30 then
+              local img = Compositor.image(ev.id)
+              if img != nil then
+                img!.save(snapshot!)
+                println("compositor: saved window " .. tostring(ev.id) .. " (" .. tostring(img!.getWidth()) .. "x" .. tostring(img!.getHeight()) .. ")")
+              end
             end
-          end
+          case _ then nil
         end
       end
 

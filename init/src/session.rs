@@ -15,6 +15,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use crate::account::{self, Account, Switch};
 use crate::cmdline::{Cmdline, OnExit};
 use crate::power::{self, Request};
 use crate::{console, log};
@@ -40,10 +41,16 @@ pub fn supervise(cmdline: &Cmdline) -> ! {
     let mut quick_crashes = 0;
 
     loop {
-        log::info(&format!("starting session: {}", cmdline.session));
+        log::info(&format!(
+            "starting session: {} as {}",
+            cmdline.session, cmdline.user
+        ));
 
         let started = Instant::now();
-        let outcome = run(&cmdline.session, &[], "/root");
+        let outcome = match session_account(&cmdline.user) {
+            Ok(account) => run(&cmdline.session, &[], &account),
+            Err(error) => Outcome::NotStarted(error),
+        };
         console::reset_vt();
 
         let failure = match outcome {
@@ -94,38 +101,99 @@ fn after_exit(on_exit: OnExit) {
     }
 }
 
-/// A debugging shell (debug images only). Leaving it restarts the session.
+/// The account the session runs as, ready to start in. Fails rather than
+/// falling back to root: running the session as root has to be asked for
+/// (`saule.user=root`).
+fn session_account(name: &str) -> std::io::Result<Account> {
+    let account = Account::find(name)
+        .ok_or_else(|| std::io::Error::other(format!("no account `{name}` in /etc/passwd")))?;
+
+    if !account.is_root() {
+        account.prepare()?;
+        lend_terminals(&account);
+    }
+
+    Ok(account)
+}
+
+/// Let the session's account use the terminals it draws over, the way a
+/// login hands a user their terminal: the console it runs on, and `tty0`,
+/// through which Shine switches the screen out of text mode.
+fn lend_terminals(account: &Account) {
+    for tty in [console::device(), "/dev/tty0".into()] {
+        let path = Path::new(&tty);
+        if path.exists() {
+            let _ = account::chown(path, account.uid, account.gid);
+            let _ = account::chmod(path, 0o620);
+        }
+    }
+}
+
+/// A debugging shell (debug images only), as root. Leaving it restarts the
+/// session.
 fn shell() {
     log::info("shell — `exit` restarts the session, `poweroff` turns the machine off");
 
-    match run(SHELL, &["-l"], "/root") {
+    let root = Account::find("root").unwrap_or(Account {
+        name: "root".into(),
+        uid: 0,
+        gid: 0,
+        groups: Vec::new(),
+        home: "/root".into(),
+    });
+
+    match run(SHELL, &["-l"], &root) {
         Outcome::Power(request) => power::shutdown(request),
         Outcome::NotStarted(error) => log::warn(&format!("could not start {SHELL}: {error}")),
         _ => {}
     }
 }
 
-/// Start `program` on the console and wait for it, reaping any other process
-/// that dies meanwhile. Returns early if a power signal arrives.
-fn run(program: &str, args: &[&str], dir: &str) -> Outcome {
+/// Start `program` on the console as `account` and wait for it, reaping any
+/// other process that dies meanwhile. Returns early if a power signal
+/// arrives.
+fn run(program: &str, args: &[&str], account: &Account) -> Outcome {
     let tty = match CString::new(console::device()) {
         Ok(tty) => tty,
         Err(error) => return Outcome::NotStarted(error.into()),
     };
 
+    let home = if account.home.is_dir() {
+        account.home.as_path()
+    } else {
+        Path::new("/")
+    };
+
     let mut command = Command::new(program);
     command
         .args(args)
-        .current_dir(if Path::new(dir).is_dir() { dir } else { "/" })
+        .current_dir(home)
         .env_clear()
         .env("PATH", "/bin:/usr/bin")
-        .env("HOME", "/root")
+        .env("HOME", home)
+        .env("USER", &account.name)
+        .env("LOGNAME", &account.name)
         .env("TERM", "linux")
         .env("LANG", "C.UTF-8");
 
-    // SAFETY: `take_over` only makes async-signal-safe syscalls.
+    if !account.is_root() {
+        command.env("XDG_RUNTIME_DIR", account.runtime_dir());
+    }
+
+    // Root stays root; anyone else is switched to in the child, after it
+    // has taken the terminal (which needs root).
+    let switch = (!account.is_root()).then(|| Switch::new(account));
+
+    // SAFETY: `take_over` and `Switch::apply` only make async-signal-safe
+    // syscalls, and everything they use was prepared before the fork.
     unsafe {
-        command.pre_exec(move || console::take_over(&tty));
+        command.pre_exec(move || {
+            console::take_over(&tty)?;
+            match &switch {
+                Some(switch) => switch.apply(),
+                None => Ok(()),
+            }
+        });
     }
 
     let child = match command.spawn() {

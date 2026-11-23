@@ -154,7 +154,9 @@ What the display server needs from Rust. Everything above it is Saule.
 
 ## Phase 4: the display server 🌙
 
-- [ ] Decide where it lives (a repo of its own, or inside this one).
+- [x] Where it lives: its own repo, [saule-wm](https://github.com/lauriszz123/saule-wm).
+      `make` builds `../saule-wm` as the session when it's there (`WM=…`
+      points elsewhere), and init starts it as the `display` account.
 - [ ] **Protocol**: messages and their encoding.
   - client → server: `hello`, `createWindow(title, w, h)`, `commit(damage)`,
     `setTitle`, `destroyWindow`;
@@ -185,7 +187,9 @@ What the display server needs from Rust. Everything above it is Saule.
 - [ ] **Decorations** (server-side title bars and borders), in the style of
       gamemaker's theme.
 - [ ] **Workspaces**.
-- [ ] **Launcher**: start a Saule app as a client process.
+- [ ] **Launcher**: start a Saule app as a client process. Through init's
+      launcher service once it exists (see Security, step 2), not
+      `Os.spawn`, so apps don't inherit the window manager's access.
 - [ ] **Milestone**: Saule Linux boots straight into the window manager.
 
 ## Phase 6: floating mode, switchable 🌙
@@ -206,14 +210,74 @@ What the display server needs from Rust. Everything above it is Saule.
       Saule Linux with `examples/pty-check`.
 - [ ] Settings, a file browser, …
 
+## Security: the macOS model 🦀🌙
+
+Decided: Saule Linux follows macOS. The person has one account, and apps run
+as that account. Each app is sandboxed on its own, though: it gets what its
+manifest asks for and what the person allows, and nothing else. In Linux
+terms:
+
+| macOS | Saule Linux |
+|---|---|
+| `launchd`, PID 1, starts everything | `saule-init` |
+| WindowServer as `_windowserver` | the window manager as `display` |
+| the user's account | one account for the person, `user` |
+| App Sandbox (Seatbelt) | Landlock (files), a network namespace or seccomp (network), no device access |
+| app container `~/Library/Containers/<id>` | `~/Containers/<app-id>`, the only place an app writes by default |
+| entitlements, signed into the app | `entitlements: [...]` in `saule.config`, packed by `saule build` |
+| TCC: "X wants to use the camera" | a permission store in init; the prompt is drawn by the window manager |
+| Powerbox: the open/save panel runs outside the app | the file dialog is drawn by the window manager; the app receives only the chosen file, as an open handle over IPC |
+| code signing, Gatekeeper | `saule build --sign`; init refuses an app whose signature doesn't match |
+
+Rules for every step:
+- **The kernel enforces, not Saule.** An app can bring its own native
+  library, which ignores anything the runtime checks. So the sandbox is
+  built from kernel features and set up by init before the app's first
+  instruction runs.
+- **It fails closed.** A missing account, manifest or signature means the
+  app doesn't start, rather than starting with more access.
+
+Steps:
+- [x] **1. Only init is root** 🦀. The session runs as `display` (uid 100)
+      with `no_new_privs`, in a private 0700 home and `XDG_RUNTIME_DIR`.
+      Screen and input devices go to the `video` and `input` groups, fixed
+      again on hotplug from the kernel's uevents (`init/src/seat.rs`). It
+      refuses to start as root unless `saule.user=root` is passed.
+- [ ] **2. init launches apps** 🦀. init gets a `saule.launcher` service (an
+      `extern interface`), which only `display` may call: the kernel's peer
+      identity says who is calling. Apps run as `user` (uid 1000), with no
+      `video` or `input` group, so they can't read the keyboard behind the
+      window manager's back. The window manager's launcher calls it 🌙.
+- [ ] **3. App sandbox** 🦀:
+  - the kernel options: `SECURITY_LANDLOCK`, `SECCOMP_FILTER`, `NET_NS`;
+  - each app is confined by Landlock to its bundle, its container and the
+    system's read-only files;
+  - no network unless it is entitled to it.
+- [ ] **4. Entitlements** 🦀: `entitlements:` in `saule.config` (e.g.
+      `network.client`, `files.user-selected`, `audio.output`), checked by
+      `saule build` and carried in the bundle's manifest. init grants
+      exactly those.
+- [ ] **5. Privacy prompts** 🦀🌙: the first time an app asks for something
+      sensitive (camera, microphone, files outside its container), init asks
+      the window manager to show a prompt and remembers the answer.
+      Settings lists and revokes them. This needs persistent `/data`
+      (phase 1).
+- [ ] **6. File dialogs (Powerbox)** 🦀🌙: an app asks for a file to be
+      opened or saved; the window manager draws the dialog and passes
+      the app only the chosen file, as a handle.
+- [ ] **7. Signing** 🦀: `saule build --sign` with a developer key, checked
+      by init at launch, so a built app's code and entitlements can't be
+      altered afterwards.
+
 ---
 
 ## Open decisions
 
 | Decision | When |
 |---|---|
-| Where the display server lives | start of phase 4 |
+| Where the display server lives | **decided: its own repo, `saule-wm`** |
 | Tiling style: split tree or master/stack | **decided: split tree (i3-style)** |
 | Whether IPC is part of Shine or a separate `saule-ipc` package | **decided: part of the language** (`extern interface`) |
 | Bundle format details (bytecode or sources, compression) | phase 2 |
 | Keyboard layouts beyond US | phase 3 |
+| Security model | **decided: macOS-style** (one account, an app sandbox, entitlements, prompts) |
