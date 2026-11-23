@@ -1,0 +1,77 @@
+--[[
+A smoke test for Shine on the bare screen (the console backend): the
+screen's real size, a circle that follows the mouse and turns orange while a
+button is held, typed text, and the keys held right now.
+
+Not part of the system — run it in place of the session with
+  make APP=examples/shine-demo DEBUG=1 run-netbook
+Ctrl-Q quits (to the debug shell); Ctrl-Alt-Del reboots.
+]]
+from shine import Graphics, Keyboard, Mouse, Timer, Window
+
+enum Event
+  KeyPressed(key: string, ctrl: boolean),
+  TextInput(text: string),
+  Other
+end
+
+fn decode(record: table) -> Event
+  return match tostring(record[1])
+    case "keyPressed" then Event.KeyPressed(tostring(record[2]), record[4] == true)
+    case "textInput" then Event.TextInput(tostring(record[2]))
+    case _ then Event.Other
+  end
+end
+
+class Main
+  static fn main()
+    Window.create(800, 600, title: "Shine demo")
+    Keyboard.setKeyRepeat(true)
+
+    local typed: string = ""
+    local running = true
+
+    while running and Window.isOpen() do
+      for record: table in Window.pollEvents() do
+        match decode(record)
+          case Event.TextInput(text) then typed = typed .. text
+          case Event.KeyPressed("backspace", _) then
+            if #typed > 0 then
+              typed = String.sub(typed, 1, #typed - 1)
+            end
+          case Event.KeyPressed("q", ctrl) when ctrl then running = false
+          case _ then nil
+        end
+      end
+
+      local w, h = Window.getSize()
+      local mx, my = Mouse.getPosition()
+
+      Graphics.clear(0.10, 0.11, 0.14)
+
+      Graphics.setColor(0.20, 0.22, 0.28)
+      Graphics.rectangle("fill", 0.0, 0.0, (w as float), 36.0)
+      Graphics.setColor(0.95, 0.95, 0.95)
+      Graphics.print("Saule Linux  -  Shine on the bare screen", 12.0, 9.0)
+
+      Graphics.setColor(0.75, 0.80, 0.90)
+      Graphics.print("screen  " .. tostring(w) .. " x " .. tostring(h), 12.0, 60.0)
+      Graphics.print("mouse   " .. tostring(mx as integer) .. ", " .. tostring(my as integer), 12.0, 84.0)
+      Graphics.print("fps     " .. tostring(Timer.getFPS() as integer), 12.0, 108.0)
+      Graphics.print("keys    " .. Table.concat(Keyboard.getKeysDown(), " "), 12.0, 132.0)
+      Graphics.print("typed > " .. typed .. "_", 12.0, 172.0)
+      Graphics.print("Ctrl-Q quits", 12.0, (h as float) - 30.0)
+
+      if Mouse.isDown(1) or Mouse.isDown(2) then
+        Graphics.setColor(1.0, 0.55, 0.15)
+      else
+        Graphics.setColor(0.30, 0.65, 1.0)
+      end
+      Graphics.circle("fill", mx, my, 24.0)
+
+      Graphics.present()
+    end
+
+    Window.close()
+  end
+end

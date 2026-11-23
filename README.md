@@ -42,6 +42,7 @@ Then:
 | `make` | download and build the kernel, build init and the session, pack the initramfs |
 | `make run` | boot in QEMU on this terminal (`Ctrl-A X` quits QEMU) |
 | `make run-gui` | boot in a QEMU window: the screen the display server will draw on |
+| `make run-netbook` | boot in QEMU dressed as the HP Mini 210 (N450, 2 GB, SeaBIOS, 1024×600, USB 2.0, PS/2): `scripts/qemu-netbook.sh` |
 | `make DEBUG=1 run` | add BusyBox: a shell when the session ends |
 | `make APPEND="saule.on_exit=restart" run` | pass kernel command line options |
 | `make menuconfig` | change kernel options; copy the keepers into `config/kernel.config` |

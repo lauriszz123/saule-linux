@@ -35,6 +35,9 @@ with Claude's guidance.
 
 ## Phase 1: a real distro 🦀
 
+The bootable stick waits: everything is developed in QEMU for now
+(`make run-netbook` dresses QEMU as the HP Mini 210).
+
 - [ ] **`make image`**: build the initramfs *into* the kernel
       (`CONFIG_INITRAMFS_SOURCE`) so the whole system is one
       `BOOTX64.EFI`.
@@ -88,29 +91,66 @@ saule build [DIR | FILE] [-o OUT] [--keep-source]
 
 What the display server needs from Rust. Everything above it is Saule.
 
-- [ ] **Shine backend interface**: split today's minifb code behind a trait
-      (window, present, input, clipboard, cursor) so backends can be swapped.
-- [ ] **Console backend** (bare screen, no X11):
+- [x] **Shine backend interface**: minifb is behind a trait
+      (`saule-shine/src/state/backend.rs`); the desktop and the bare screen
+      are two backends, picked by `Window.create`.
+- [x] **Console backend** (bare screen, no X11), `saule-shine/src/state/console/`:
   - drawing to the screen through DRM/KMS dumb buffers, double-buffered
-    and in sync with the monitor's refresh (vsync);
-  - keyboard and mouse from `/dev/input/event*`, translating key codes into
-    Shine's key names, with a US layout first;
-  - the mouse cursor drawn by the server.
-- [ ] **IPC package**:
-  - non-blocking Unix sockets (listen, accept, connect, send and receive
-    `Bytes`);
-  - **shared buffers**: memfd + mmap, passed between processes over the
-    socket, and used in Saule as a Shine `Image`;
-  - waiting on several sockets at once, instead of busy-looping.
-- [ ] **Shine client mode**:
-  - when `SAULE_DISPLAY` is set, `Window.create` connects to the display
-    server instead of opening a real window;
-  - `present` tells the server a new frame is ready;
-  - input arrives from the server.
-
-  uikit and every app work unchanged.
-- [ ] **Byte packing for the protocol**: check what `Bytes` already offers,
-      and add reading and writing of u16/u32/f32 if needed.
+    with page flips in sync with the display;
+  - keyboard and mouse from `/dev/input/event*` (mice, PS/2 touchpads,
+    tablets), key codes to Shine's key names, US layout;
+  - the hardware cursor where the driver has one (i915), drawn into the
+    frames where not (QEMU's bochs);
+  - the text console switched off while Shine owns the screen, and put
+    back on exit (and by init after a crash); Ctrl-Alt-Del still reboots.
+  - Checked in QEMU as the netbook: `examples/shine-demo` at 1024×600,
+    60 FPS, typing and mouse working.
+  - No GPU acceleration: the netbook's GMA 3150 only does OpenGL ES 2
+    through Mesa, slower than Shine's own renderer for 2D.
+- **IPC, part of the language** (like Android's AIDL/Binder or macOS's XPC):
+  services are objects behind an `extern interface`, and calling another
+  process is calling a method.
+  ```saule
+  export extern interface Display
+    fn createWindow(title: string, width: integer, height: integer, events: WindowEvents) -> Window
+  end
+  export extern interface WindowEvents
+    async fn configure(width: integer, height: integer)   -- no reply: never waits on an app
+  end
+  local display = Services.connect(Display, "saule.display")
+  ```
+  `fn` waits for its reply (serving incoming calls meanwhile, so callbacks
+  cannot deadlock); `async fn` with no result is fire-and-forget; `async fn
+  -> T` returns a `Task<T>` to `await` — anywhere, not only inside `async`
+  code. Plain data classes are copied; `extern interface` values pass by
+  reference.
+  - [x] **1. Transport** in the Saule runtime (`saule/crates/saule-runtime/src/ipc/`):
+        whole messages and handles over Unix sockets (Linux, macOS) or named
+        pipes (Windows), shared memory, services by name visible only to
+        their user, peer identity from the kernel, calls with and without
+        replies, objects by reference with counted release, a peer that
+        stops reading cut off rather than blocking the sender.
+  - [x] **2.** `extern interface`, `fn` and no-result `async fn`:
+        parser, formatter, checker (what can cross a process boundary),
+        compiler, runtime proxies and exports; `Iface.connect`,
+        `Iface.publish` and `Looper`. Remote failures are catchable.
+        Fixtures in `saule/tests/run/ipc` and `tests/errors/ipc`.
+  - [ ] **3.** `async fn -> T`, `Task<T>` and `await`.
+- [x] **Shine client mode and `Compositor`** (`saule-shine/src/protocol.rs`):
+  - when `SAULE_DISPLAY` is set, `Window.create` opens the window inside
+    the display server; frames go through shared memory, input and the
+    window's size come from the server. Apps run unchanged.
+  - a display server written in Saule uses `Compositor`: `start`, `poll`
+    (opened / frame / title / closed), `image(id)` to draw a window,
+    `configure`, and `sendKey` / `sendText` / `sendPointer` / `sendButton`
+    / `sendWheel` / `sendFocus` / `requestClose`.
+  - the transport moved into its own crate, `saule-ipc`, used by both
+    Saule's runtime and Shine.
+  - Checked on macOS (as a desktop window) and in QEMU as the netbook:
+    `examples/compositor-demo` running `examples/shine-demo` unchanged,
+    typing and mouse forwarded.
+- [x] **Several programs in one image**: `make APPS="examples/a examples/b"`
+      builds each into `/bin/apps/<name>`.
 
 ## Phase 4: the display server 🌙
 
@@ -169,7 +209,7 @@ What the display server needs from Rust. Everything above it is Saule.
 | Decision | When |
 |---|---|
 | Where the display server lives | start of phase 4 |
-| Tiling style: split tree or master/stack | start of phase 5 |
-| Whether IPC is part of Shine or a separate `saule-ipc` package | phase 3 |
+| Tiling style: split tree or master/stack | **decided: split tree (i3-style)** |
+| Whether IPC is part of Shine or a separate `saule-ipc` package | **decided: part of the language** (`extern interface`) |
 | Bundle format details (bytecode or sources, compression) | phase 2 |
 | Keyboard layouts beyond US | phase 3 |

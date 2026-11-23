@@ -6,6 +6,7 @@
 #   make run          boot it in QEMU, console on this terminal (Ctrl-A X quits)
 #   make run-gui      boot it in a QEMU window (the screen the display server
 #                     will draw on)
+#   make run-netbook  boot it in QEMU dressed as the HP Mini 210
 #   make DEBUG=1 run  include BusyBox: a shell when the session ends
 #
 #   make menuconfig   change kernel options (copy keepers to config/kernel.config)
@@ -18,13 +19,16 @@
 # DEBUG=1 also needs busybox-static.
 
 KERNEL_VERSION ?= 6.18.64
-JOBS           ?= $(shell nproc)
+JOBS           ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
 DEBUG          ?= 0
 
 SAULE   ?= $(shell command -v saule)
 BUSYBOX ?= $(shell command -v busybox)
 QEMU    ?= qemu-system-x86_64
 APP     ?= session
+# Further Saule projects to build into the image as /bin/apps/<name>, for the
+# session to start — the apps under a display server.
+APPS    ?=
 
 BUILD     := build
 KSRC      := $(BUILD)/linux-$(KERNEL_VERSION)
@@ -35,12 +39,20 @@ INIT      := init/target/x86_64-unknown-linux-musl/release/saule-init
 GEN_CPIO  := $(BUILD)/tools/gen_init_cpio
 INITRAMFS := $(BUILD)/initramfs.cpio.gz
 SESSION   := $(BUILD)/session
+APPS_OUT  := $(BUILD)/apps
 TARBALL   := $(BUILD)/downloads/linux-$(KERNEL_VERSION).tar.xz
 KERNEL_URL := https://cdn.kernel.org/pub/linux/kernel/v$(firstword $(subst ., ,$(KERNEL_VERSION))).x/linux-$(KERNEL_VERSION).tar.xz
 
 ifeq ($(DEBUG),1)
   INITRAMFS_BUSYBOX := $(BUSYBOX)
 endif
+
+# Native Saule packages the session may bundle (Shine, …): the image needs
+# the shared libraries they load. And the fonts Shine looks for.
+SAULE_HOME  ?= $(HOME)/.saule
+NATIVE_LIBS ?= $(wildcard $(SAULE_HOME)/native_packages/*.so)
+FONTS       ?= $(wildcard /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+                          /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)
 
 # KVM when this user may use it (add yourself to the `kvm` group), plain
 # emulation otherwise.
@@ -49,7 +61,31 @@ QEMU_FLAGS ?= -m 2G -smp 2 -no-reboot $(QEMU_ACCEL) \
               -kernel $(BZIMAGE) -initrd $(INITRAMFS)
 APPEND     ?=
 
-.PHONY: all kernel init session initramfs run run-gui menuconfig check-config clean distclean
+# On a Mac nothing here can be built natively (it needs a Linux toolchain and
+# an x86_64 Linux saule), so the build targets run in an x86_64 Ubuntu
+# container (scripts/docker.sh, Docker needed) and QEMU runs on the Mac, on
+# the kernel and initramfs the container copies to out/.
+HOST_OS := $(shell uname -s)
+ifeq ($(HOST_OS),Darwin)
+  BZIMAGE   := out/bzImage
+  INITRAMFS := out/initramfs.cpio.gz
+  QEMU_FLAGS = -m 2G -smp 2 -no-reboot -kernel $(BZIMAGE) -initrd $(INITRAMFS)
+endif
+
+.PHONY: all kernel init session initramfs run run-gui run-netbook menuconfig check-config clean distclean
+
+ifeq ($(HOST_OS),Darwin)
+
+# APP and APPS must be inside this repo: only the repo, ../saule and
+# ../saule-shine reach the container.
+all kernel init session initramfs menuconfig check-config:
+	scripts/docker.sh make $@ DEBUG=$(DEBUG) APP=$(APP) APPS="$(APPS)" KERNEL_VERSION=$(KERNEL_VERSION)
+
+clean distclean:
+	scripts/docker.sh make $@
+	rm -rf out
+
+else
 
 all: kernel initramfs
 
@@ -98,12 +134,20 @@ $(GEN_CPIO): $(KSRC)/Makefile
 session:
 	@test -n "$(SAULE)" || { echo "saule not found: install it or pass SAULE=/path/to/saule"; exit 1; }
 	$(SAULE) build $(APP) -o $(SESSION)
+	rm -rf $(APPS_OUT)
+	mkdir -p $(APPS_OUT)
+	for app in $(APPS); do \
+		$(SAULE) build $$app -o $(APPS_OUT)/$$(basename $$app) || exit 1; \
+	done
 
 initramfs: init session $(GEN_CPIO)
 	@test "$(DEBUG)" != 1 -o -n "$(BUSYBOX)" || { echo "DEBUG=1 needs busybox (apt install busybox-static) or BUSYBOX=/path"; exit 1; }
 	STAGE=$(BUILD)/rootfs GEN_INIT_CPIO=$(GEN_CPIO) INIT=$(INIT) SESSION=$(SESSION) \
-	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) \
+	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) APPS_DIR=$(APPS_OUT) \
+	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" \
 	scripts/mkinitramfs.sh $(INITRAMFS)
+
+endif  # not Darwin
 
 # ---------------------------------------------------------------------------
 # Running
@@ -116,8 +160,15 @@ run: all
 run-gui: all
 	$(QEMU) $(QEMU_FLAGS) -vga std -serial stdio -append "console=ttyS0 console=tty1 $(APPEND)"
 
+# QEMU dressed as the HP Mini 210 (Atom N450, 2 GB, SeaBIOS, 1024x600 VGA,
+# EHCI, PS/2): see scripts/qemu-netbook.sh. Loads the kernel directly until
+# there is a USB stick image; then `scripts/qemu-netbook.sh --usb IMAGE`.
+run-netbook: all
+	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) --append "$(APPEND)"
+
 # ---------------------------------------------------------------------------
 
+ifneq ($(HOST_OS),Darwin)
 clean:
 	rm -rf $(KOUT) $(BUILD)/rootfs $(BUILD)/tools $(INITRAMFS) $(SESSION)
 	cd init && cargo clean
@@ -125,3 +176,4 @@ clean:
 distclean:
 	rm -rf $(BUILD)
 	cd init && cargo clean
+endif

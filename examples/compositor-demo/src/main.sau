@@ -1,0 +1,196 @@
+--[[
+A test display server for Shine's `Compositor` — not the window manager.
+
+It puts every window side by side, sends keys to the focused one and the
+mouse to the one under it, and draws a title bar over each. Enough to see
+that apps run inside it unchanged; the real window manager is yours.
+
+  saule run examples/compositor-demo [app …]   starts each app inside it
+On Saule Linux it starts everything in /bin/apps. Ctrl-Alt-Q quits.
+DEMO_SNAPSHOT=file.png saves the first window's picture once it has drawn.
+]]
+from shine import Compositor, Graphics, Window
+
+enum Input
+  KeyPressed(key: string, shift: boolean, ctrl: boolean, alt: boolean),
+  KeyReleased(key: string, shift: boolean, ctrl: boolean, alt: boolean),
+  Text(text: string),
+  Moved(x: float, y: float),
+  Pressed(x: float, y: float, button: integer),
+  Released(x: float, y: float, button: integer),
+  Wheel(dx: float, dy: float),
+  Other
+end
+
+fn decode(r: table) -> Input
+  return match tostring(r[1])
+    case "keyPressed" then Input.KeyPressed(tostring(r[2]), r[3] == true, r[4] == true, r[5] == true)
+    case "keyReleased" then Input.KeyReleased(tostring(r[2]), r[3] == true, r[4] == true, r[5] == true)
+    case "textInput" then Input.Text(tostring(r[2]))
+    case "mouseMoved" then Input.Moved(r[2] as float ?? 0.0, r[3] as float ?? 0.0)
+    case "mousePressed" then Input.Pressed(r[2] as float ?? 0.0, r[3] as float ?? 0.0, r[4] as integer ?? 1)
+    case "mouseReleased" then Input.Released(r[2] as float ?? 0.0, r[3] as float ?? 0.0, r[4] as integer ?? 1)
+    case "wheelMoved" then Input.Wheel(r[2] as float ?? 0.0, r[3] as float ?? 0.0)
+    case _ then Input.Other
+  end
+end
+
+class Tile
+  id: integer
+  x: float = 0.0
+  y: float = 0.0
+  w: integer = 1
+  h: integer = 1
+
+  fn init(id: integer)
+    self.id = id
+  end
+
+  fn contains(px: float, py: float) -> boolean
+    return px >= self.x and px < self.x + (self.w as float) and py >= self.y and py < self.y + (self.h as float)
+  end
+end
+
+class Main
+  static bar: float = 22.0
+
+  static fn main()
+    Window.create(1024, 600, title: "compositor demo")
+    Compositor.start()
+
+    local apps = Os.args()
+    if #apps == 0 and Os.exists("/bin/apps") then
+      for name: string in Os.list("/bin/apps") do
+        Table.insert(apps, "/bin/apps/" .. name)
+      end
+    end
+    for app: string in apps do
+      println("compositor: starting " .. app)
+      Os.spawn(app)
+    end
+
+    local tiles: table<Tile> = {}
+    local focused: integer = 0
+    local hovered: integer = 0
+    local frames: integer = 0
+    local snapshot = Os.getenv("DEMO_SNAPSHOT")
+    local running = true
+
+    while running and Window.isOpen() do
+      local changed = false
+      for r: table in Compositor.poll() do
+        local kind = tostring(r[1])
+        local id = r[2] as integer ?? 0
+        if kind == "opened" then
+          println("compositor: window " .. tostring(id) .. " opened: " .. tostring(r[3]))
+          Table.insert(tiles, Tile(id))
+          focused = id
+          changed = true
+        elseif kind == "closed" then
+          println("compositor: window " .. tostring(id) .. " closed")
+          for i = #tiles, 1, -1 do
+            if tiles[i].id == id then
+              Table.remove(tiles, i)
+            end
+          end
+          if focused == id then
+            focused = 0
+            if #tiles > 0 then
+              focused = tiles[#tiles].id
+            end
+          end
+          changed = true
+        elseif kind == "frame" then
+          frames = frames + 1
+          if snapshot != nil and frames == 30 then
+            local img = Compositor.image(id)
+            if img != nil then
+              img!.save(snapshot!)
+              println("compositor: saved window " .. tostring(id) .. " (" .. tostring(img!.getWidth()) .. "x" .. tostring(img!.getHeight()) .. ")")
+            end
+          end
+        end
+      end
+
+      local sw, sh = Window.getSize()
+      if changed then
+        -- Side by side, each with a title bar.
+        local n = #tiles
+        for i = 1, n do
+          local t = tiles[i]
+          local w = ((sw as float) / (n as float)) as integer
+          t.x = ((i - 1) * w) as float
+          t.y = Main.bar
+          t.w = w
+          t.h = sh - (Main.bar as integer)
+          Compositor.configure(t.id, t.w, t.h)
+        end
+        for t: Tile in tiles do
+          Compositor.sendFocus(t.id, t.id == focused)
+        end
+      end
+
+      for r: table in Window.pollEvents() do
+        match decode(r)
+          case Input.KeyPressed("q", _, ctrl, alt) when ctrl and alt then running = false
+          case Input.KeyPressed(key, shift, ctrl, alt) then
+            if focused != 0 then Compositor.sendKey(focused, key, true, shift, ctrl, alt) end
+          case Input.KeyReleased(key, shift, ctrl, alt) then
+            if focused != 0 then Compositor.sendKey(focused, key, false, shift, ctrl, alt) end
+          case Input.Text(text) then
+            if focused != 0 then Compositor.sendText(focused, text) end
+          case Input.Moved(x, y) then
+            local under = 0
+            for t: Tile in tiles do
+              if t.contains(x, y) then
+                under = t.id
+                Compositor.sendPointer(t.id, x - t.x, y - t.y)
+              end
+            end
+            if hovered != 0 and hovered != under then Compositor.sendLeave(hovered) end
+            hovered = under
+          case Input.Pressed(x, y, button) then
+            for t: Tile in tiles do
+              if t.contains(x, y) then
+                if focused != t.id then
+                  if focused != 0 then Compositor.sendFocus(focused, false) end
+                  focused = t.id
+                  Compositor.sendFocus(t.id, true)
+                end
+                Compositor.sendButton(t.id, button, true)
+              end
+            end
+          case Input.Released(x, y, button) then
+            for t: Tile in tiles do
+              if t.contains(x, y) then Compositor.sendButton(t.id, button, false) end
+            end
+          case Input.Wheel(dx, dy) then
+            if hovered != 0 then Compositor.sendWheel(hovered, dx, dy) end
+          case _ then nil
+        end
+      end
+
+      Graphics.clear(0.08, 0.09, 0.11)
+      for t: Tile in tiles do
+        if t.id == focused then
+          Graphics.setColor(0.25, 0.45, 0.85)
+        else
+          Graphics.setColor(0.22, 0.24, 0.30)
+        end
+        Graphics.rectangle("fill", t.x, 0.0, t.w as float, Main.bar)
+        Graphics.setColor(0.95, 0.95, 0.95)
+        Graphics.print(Compositor.title(t.id) ?? "?", t.x + 8.0, 3.0)
+        local img = Compositor.image(t.id)
+        if img != nil then
+          Graphics.setColor(1.0, 1.0, 1.0)
+          Graphics.draw(img!, t.x, t.y)
+        end
+      end
+      if #tiles == 0 then
+        Graphics.setColor(0.6, 0.6, 0.65)
+        Graphics.print("no windows yet", 20.0, 20.0)
+      end
+      Graphics.present()
+    end
+  end
+end

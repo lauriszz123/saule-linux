@@ -44,6 +44,7 @@ pub fn supervise(cmdline: &Cmdline) -> ! {
 
         let started = Instant::now();
         let outcome = run(&cmdline.session, &[], "/root");
+        console::reset_vt();
 
         let failure = match outcome {
             Outcome::Power(request) => power::shutdown(request),

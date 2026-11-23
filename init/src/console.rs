@@ -79,3 +79,27 @@ fn redirect(fd: libc::c_int) {
         }
     }
 }
+
+/// Put the screen's virtual terminal back to text with a working keyboard.
+///
+/// A session that draws on the bare screen (Shine's console backend)
+/// switches the terminal to graphics mode and turns its keyboard off, and
+/// switches both back when it closes. One that crashes doesn't, which would
+/// leave whatever runs next — the restarted session, the debug shell — on a
+/// blank screen that ignores the keyboard. So init resets it whenever a
+/// session ends. Harmless when there is no virtual terminal.
+pub fn reset_vt() {
+    const KDSETMODE: libc::Ioctl = 0x4B3A;
+    const KDSKBMODE: libc::Ioctl = 0x4B45;
+    const KD_TEXT: libc::c_ulong = 0;
+    const K_UNICODE: libc::c_ulong = 3;
+
+    if let Some(fd) = open("/dev/tty0") {
+        // SAFETY: both requests take the mode by value; `fd` is ours.
+        unsafe {
+            libc::ioctl(fd, KDSETMODE, KD_TEXT);
+            libc::ioctl(fd, KDSKBMODE, K_UNICODE);
+            libc::close(fd);
+        }
+    }
+}
