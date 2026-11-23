@@ -47,6 +47,15 @@ ifeq ($(DEBUG),1)
   INITRAMFS_BUSYBOX := $(BUSYBOX)
 endif
 
+# The usual command-line tools — BusyBox's sh, ls, cat, vi, … — in /usr/bin,
+# for a terminal app to run. Not /bin/sh: a /bin/sh is what turns init's
+# fallback into a debug shell, and that stays DEBUG=1's. TOOLS=0 leaves
+# them out.
+TOOLS ?= 1
+ifeq ($(TOOLS),1)
+  INITRAMFS_TOOLS := $(BUSYBOX)
+endif
+
 # Native Saule packages the session may bundle (Shine, …): the image needs
 # the shared libraries they load. And the fonts Shine looks for.
 SAULE_HOME  ?= $(HOME)/.saule
@@ -79,7 +88,7 @@ ifeq ($(HOST_OS),Darwin)
 # APP and APPS must be inside this repo: only the repo, ../saule and
 # ../saule-shine reach the container.
 all kernel init session initramfs menuconfig check-config:
-	scripts/docker.sh make $@ DEBUG=$(DEBUG) APP=$(APP) APPS="$(APPS)" KERNEL_VERSION=$(KERNEL_VERSION)
+	scripts/docker.sh make $@ DEBUG=$(DEBUG) TOOLS=$(TOOLS) APP=$(APP) APPS="$(APPS)" KERNEL_VERSION=$(KERNEL_VERSION)
 
 clean distclean:
 	scripts/docker.sh make $@
@@ -142,8 +151,9 @@ session:
 
 initramfs: init session $(GEN_CPIO)
 	@test "$(DEBUG)" != 1 -o -n "$(BUSYBOX)" || { echo "DEBUG=1 needs busybox (apt install busybox-static) or BUSYBOX=/path"; exit 1; }
+	@test "$(TOOLS)" != 1 -o -n "$(BUSYBOX)" || { echo "TOOLS=1 needs busybox (apt install busybox-static) or BUSYBOX=/path; TOOLS=0 builds without"; exit 1; }
 	STAGE=$(BUILD)/rootfs GEN_INIT_CPIO=$(GEN_CPIO) INIT=$(INIT) SESSION=$(SESSION) \
-	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) APPS_DIR=$(APPS_OUT) \
+	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) APPS_DIR=$(APPS_OUT) \
 	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" \
 	scripts/mkinitramfs.sh $(INITRAMFS)
 

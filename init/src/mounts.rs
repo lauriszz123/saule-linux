@@ -12,8 +12,7 @@ struct Mount {
 
 const NOSUID_NODEV_NOEXEC: libc::c_ulong = libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
 
-/// Mounted in this order. `/dev/pts` (for terminals) joins the list with
-/// the terminal app in phase 7.
+/// Mounted in this order. `/dev/pts` comes after `/dev`, which it lives in.
 const MOUNTS: &[Mount] = &[
     Mount {
         source: "proc",
@@ -35,6 +34,16 @@ const MOUNTS: &[Mount] = &[
         fstype: "devtmpfs",
         flags: libc::MS_NOSUID,
         options: "mode=0755",
+    },
+    // Pseudo-terminals: a terminal app's shell runs behind one
+    // (`Os.spawnPty`). `ptmxmode` opens `/dev/pts/ptmx` to everyone, as the
+    // `/dev/ptmx` devtmpfs makes already is.
+    Mount {
+        source: "devpts",
+        target: "/dev/pts",
+        fstype: "devpts",
+        flags: libc::MS_NOSUID | libc::MS_NOEXEC,
+        options: "mode=0620,ptmxmode=0666",
     },
     Mount {
         source: "tmpfs",

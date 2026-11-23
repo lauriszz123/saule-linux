@@ -15,6 +15,10 @@
 #   ROOTFS         files copied over the tree as they are (etc/, …)
 #   BUSYBOX        optional: a BusyBox binary — adds /bin/sh and the usual
 #                  tools (debug images)
+#   TOOLS_BUSYBOX  optional: a BusyBox binary — the usual tools in /usr/bin,
+#                  sh included, for programs to run (a terminal's shell).
+#                  Unlike BUSYBOX it adds no /bin/sh, so init's fallback
+#                  stays as it is
 #   NATIVE_LIBS    optional: native Saule packages (.so) the session may
 #                  load. They travel inside the session; what goes in the
 #                  tree is the shared libraries *they* need.
@@ -32,6 +36,7 @@ output=${1:?usage: mkinitramfs.sh OUTPUT.cpio.gz}
 
 : "${STAGE:?}" "${GEN_INIT_CPIO:?}" "${INIT:?}" "${SESSION:?}" "${ROOTFS:?}"
 BUSYBOX=${BUSYBOX:-}
+TOOLS_BUSYBOX=${TOOLS_BUSYBOX:-}
 NATIVE_LIBS=${NATIVE_LIBS:-}
 FONTS=${FONTS:-}
 APPS_DIR=${APPS_DIR:-}
@@ -92,6 +97,17 @@ if [ -n "$BUSYBOX" ]; then
             init | linuxrc | busybox) continue ;;
         esac
         [ -e "$STAGE/bin/$applet" ] || ln -s busybox "$STAGE/bin/$applet"
+    done
+fi
+
+if [ -n "$TOOLS_BUSYBOX" ]; then
+    add_program "$TOOLS_BUSYBOX" /usr/bin/busybox
+
+    for applet in $("$TOOLS_BUSYBOX" --list); do
+        case $applet in
+            init | linuxrc | busybox) continue ;;
+        esac
+        [ -e "$STAGE/usr/bin/$applet" ] || ln -s busybox "$STAGE/usr/bin/$applet"
     done
 fi
 

@@ -199,7 +199,11 @@ What the display server needs from Rust. Everything above it is Saule.
 ## Phase 7: apps 🌙
 
 - [ ] Gamemaker running as a client, unchanged.
-- [ ] A terminal (needs a pty package 🦀).
+- [ ] A terminal. What it needs from Rust is done 🦀: `Os.spawnPty` runs a
+      shell behind a pseudo-terminal (Unix pty / Windows ConPTY), the kernel
+      has pseudo-terminals and init mounts `/dev/pts`, and every image has
+      BusyBox's tools in `/usr/bin` (`TOOLS=1`, the default). Checked on
+      Saule Linux with `examples/pty-check`.
 - [ ] Settings, a file browser, …
 
 ---

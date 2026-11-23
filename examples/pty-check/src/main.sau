@@ -1,0 +1,24 @@
+--[[
+A check that a shell runs behind a pseudo-terminal on Saule Linux: what a
+terminal app does. Run as the session:
+  make APP=examples/pty-check run
+]]
+
+class Main
+  static fn main()
+    local sh = Os.spawnPty("sh", { "-c", "echo shell=$0; [ -t 0 ] && echo terminal=yes; stty size; ls /usr/bin | wc -l" })
+    if sh == nil then
+      println("pty-check: could not start sh")
+      return
+    end
+    sh!.resize(100, 30)
+    local out = ""
+    local deadline = Os.clock() + 5.0
+    while not sh!.atEof() and Os.clock() < deadline do
+      out = out .. (Bytes.toString(sh!.read()) ?? "")
+      Os.sleep(0.02)
+    end
+    println("pty-check: exit " .. tostring(sh!.poll() ?? -1))
+    print(out)
+  end
+end

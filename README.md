@@ -43,7 +43,9 @@ Then:
 | `make run` | boot in QEMU on this terminal (`Ctrl-A X` quits QEMU) |
 | `make run-gui` | boot in a QEMU window: the screen the display server will draw on |
 | `make run-netbook` | boot in QEMU dressed as the HP Mini 210 (N450, 2 GB, SeaBIOS, 1024×600, USB 2.0, PS/2): `scripts/qemu-netbook.sh` |
-| `make DEBUG=1 run` | add BusyBox: a shell when the session ends |
+| `make DEBUG=1 run` | add BusyBox at `/bin`: a shell when the session ends |
+| `make APP=examples/compositor-demo APPS="examples/shine-demo" run-netbook` | a session plus apps, each built into `/bin/apps/<name>` |
+| `make TOOLS=0 …` | leave out the command-line tools (BusyBox in `/usr/bin`, there by default for a terminal app's shell) |
 | `make APPEND="saule.on_exit=restart" run` | pass kernel command line options |
 | `make menuconfig` | change kernel options; copy the keepers into `config/kernel.config` |
 | `make check-config` | list options `config/kernel.config` asked for but didn't get |
@@ -57,7 +59,8 @@ Then:
 1. **The kernel** (`config/kernel.config` on top of `allnoconfig`) unpacks the
    initramfs into RAM and runs `/init`.
 2. **`/init`** (`init/`, Rust, static musl binary) is PID 1:
-   - mounts `/proc`, `/sys`, `/dev`, `/run` and `/tmp`;
+   - mounts `/proc`, `/sys`, `/dev`, `/dev/pts` (pseudo-terminals, for a
+     terminal app), `/run` and `/tmp`;
    - sets the hostname and prints `/etc/motd`;
    - runs `/bin/session` on the console with a clean environment
      (`HOME=/root`);
