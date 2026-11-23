@@ -1,0 +1,50 @@
+--[[
+The session: the Saule program init starts once the system is up.
+
+For now it says hello and shows what it is running on. Later this becomes the
+display server (see ROADMAP.md, phase 4). When it returns, init powers the
+machine off; when it crashes, init starts it again.
+]]
+
+class Main
+  static fn main()
+    println("")
+    println(
+      "  Hello from Saule on " .. Main.firstLine("/proc/sys/kernel/ostype") .. " " .. Main.firstLine(
+        "/proc/sys/kernel/osrelease"
+      )
+    )
+    println("  uptime  " .. Main.firstWord("/proc/uptime") .. " s")
+    println("  memory  " .. Main.memTotal())
+    println("")
+  end
+
+  -- The first line of a file, or "?" when it can't be read.
+  static fn firstLine(path: string) -> string
+    local file = Io.open(path, IoMode.Read)
+
+    if file == nil then
+      return "?"
+    end
+
+    local line = file!.read("l") ?? "?"
+    file!.close()
+
+    return line
+  end
+
+  static fn firstWord(path: string) -> string
+    return String.split(Main.firstLine(path), " ")[1]
+  end
+
+  -- "MemTotal:   1012345 kB" → "1012345 kB"
+  static fn memTotal() -> string
+    local kb = String.match(Main.firstLine("/proc/meminfo"), "(%d+)")
+
+    if kb == nil then
+      return "?"
+    end
+
+    return kb![1] .. " kB"
+  end
+end

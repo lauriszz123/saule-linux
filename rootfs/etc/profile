@@ -1,0 +1,2 @@
+# Read by the debug shell (DEBUG=1 images only).
+export PS1='\h:\w# '

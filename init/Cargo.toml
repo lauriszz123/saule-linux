@@ -1,0 +1,16 @@
+[package]
+name = "saule-init"
+version = "0.1.0"
+edition = "2021"
+description = "PID 1 of Saule Linux: mounts the system, starts the Saule session, powers off."
+publish = false
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
