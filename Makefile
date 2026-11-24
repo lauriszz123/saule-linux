@@ -7,7 +7,9 @@
 #   make run-gui      boot it in a QEMU window (the screen the display server
 #                     will draw on)
 #   make run-netbook  boot it in QEMU dressed as the HP Mini 210-1001sa
-#                     (SLOW=1: at about its speed)
+#                     (SLOW=1: at about its speed; GL=1: with a 3D GPU;
+#                     MEMORY=2G: with its memory upgraded). Its hard disk
+#                     is disks/netbook.qcow2, kept between runs
 #   make run-vesa     the same with no graphics driver: the BIOS's VESA
 #                     screen, the fallback for a chip with no driver
 #   make DEBUG=1 run  include BusyBox: a shell when the session ends
@@ -16,14 +18,20 @@
 #   make apps         build only the apps, into build/apps (for the window
 #                     manager nested on a desktop: see saule-wm's README)
 #
+#   make test         run init's tests
+#
 #   make menuconfig   change kernel options (copy keepers to config/kernel.config)
 #   make check-config list options config/kernel.config asked for but didn't get
 #   make clean        remove what was built, keep the kernel source
 #   make distclean    remove build/ entirely
 #
+# Neither clean touches disks/: what the system saved on the netbook's hard
+# disk is not build output. Delete disks/netbook.qcow2 for an empty disk.
+#
 # Host packages (Ubuntu): build-essential flex bison bc libelf-dev libssl-dev
-# cpio qemu-system-x86, plus `rustup target add x86_64-unknown-linux-musl`.
-# DEBUG=1 also needs busybox-static.
+# cpio qemu-system-x86 busybox-static, plus
+# `rustup target add x86_64-unknown-linux-musl`. busybox-static is the
+# command-line tools (TOOLS=1, the default) and the DEBUG=1 shell.
 
 KERNEL_VERSION ?= 6.18.64
 JOBS           ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
@@ -67,6 +75,13 @@ TOOLS ?= 1
 ifeq ($(TOOLS),1)
   INITRAMFS_TOOLS := $(BUSYBOX)
 endif
+
+# What init makes and checks the data disk's file system with
+# (init/src/storage.rs): this machine's mke2fs and e2fsck (e2fsprogs), copied
+# into the image with the libraries they load. Without them an empty disk
+# is formatted by BusyBox's mke2fs (TOOLS=1) as ext2, with no journal and
+# nothing to mend it after a power cut; with neither, not at all.
+FS_TOOLS ?= $(foreach tool,mke2fs e2fsck,$(shell command -v $(tool)))
 
 # Native Saule packages the session may bundle (Shine, …): the image needs
 # the shared libraries they load. And the fonts Shine looks for.
@@ -112,14 +127,16 @@ ifeq ($(HOST_OS),Darwin)
   VNC_OPEN = open vnc://127.0.0.1:5901
 endif
 
-.PHONY: all kernel init session apps drivers initramfs run run-gui run-vnc run-netbook run-vesa menuconfig check-config clean distclean
+.PHONY: all kernel init session apps drivers initramfs test
+.PHONY: run run-gui run-vnc run-netbook run-vesa
+.PHONY: menuconfig check-config clean distclean
 
 ifeq ($(HOST_OS),Darwin)
 
 # APP must be inside this repo or ../saule-wm: only those, ../saule and
 # ../saule-shine reach the container, and the apps in APPS beside the repo
 # (`../saule-linux-apps/settings`), which scripts/docker.sh mounts.
-all kernel init session initramfs menuconfig check-config:
+all kernel init session initramfs test menuconfig check-config:
 	scripts/docker.sh make $@ DEBUG=$(DEBUG) TOOLS=$(TOOLS) APP=$(APP) APPS="$(APPS)" KERNEL_VERSION=$(KERNEL_VERSION)
 
 clean distclean:
@@ -166,6 +183,9 @@ check-config: $(KOUT)/.config
 init:
 	cd init && cargo build --release
 
+test:
+	cd init && cargo test
+
 $(GEN_CPIO): $(KSRC)/Makefile
 	mkdir -p $(dir $@)
 	$(CC) -O2 -o $@ $(KSRC)/usr/gen_init_cpio.c
@@ -202,6 +222,7 @@ initramfs: init session apps $(GEN_CPIO)
 	STAGE=$(BUILD)/rootfs GEN_INIT_CPIO=$(GEN_CPIO) INIT=$(INIT) SESSION=$(SESSION) \
 	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) APPS_DIR=$(APPS_OUT) \
 	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" DRIVERS_DIR="$(DRIVERS_DIR)" \
+	FS_TOOLS="$(FS_TOOLS)" \
 	WALLPAPERS="$(wildcard $(WM)/wallpapers)" scripts/mkinitramfs.sh $(INITRAMFS)
 
 endif  # not Darwin
@@ -233,15 +254,19 @@ run-vnc: all
 # VGA, EHCI, PS/2): see scripts/qemu-netbook.sh. Loads the kernel directly
 # until there is a USB stick image; then `scripts/qemu-netbook.sh --usb IMAGE`.
 #
-#   SLOW=1   about the netbook's speed (KVM capped at 8% of a core);
-#   SLOW=12  the same with another percentage, while calibrating
+#   SLOW=1     about the netbook's speed (KVM capped at 8% of a core);
+#   SLOW=12    the same with another percentage, while calibrating
 #   MEMORY=2G  RAM, for a netbook with its memory upgraded
+#   GL=1       the virtual GPU with 3D, for drawing on the GPU (the
+#              `virtual` driver pack)
+#
+# Its 250 GB hard disk is disks/netbook.qcow2, made empty on the first run
+# and kept from then on: what the system saves there outlives a reboot.
 SLOW   ?=
 MEMORY ?= 1G
-NETBOOK_SLOW := $(if $(filter 1 yes,$(SLOW)),--slow,$(if $(SLOW),--slow=$(SLOW)))
-# GL=1: the virtual GPU with 3D, for drawing on the GPU (the `virtual` pack).
 GL     ?=
-NETBOOK_GL := $(if $(filter 1 yes,$(GL)),--gl)
+NETBOOK_SLOW := $(if $(filter 1 yes,$(SLOW)),--slow,$(if $(SLOW),--slow=$(SLOW)))
+NETBOOK_GL   := $(if $(filter 1 yes,$(GL)),--gl)
 run-netbook: all
 	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) \
 		--memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL) --append "$(APPEND)"
