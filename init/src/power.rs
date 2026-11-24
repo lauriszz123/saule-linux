@@ -67,8 +67,15 @@ pub fn shutdown(request: Request) -> ! {
     }
     std::thread::sleep(std::time::Duration::from_millis(500));
 
+    // SAFETY: as above.
     unsafe {
         libc::kill(-1, libc::SIGKILL);
+    }
+    // Every process gone, the data disk can be let go of cleanly.
+    crate::storage::unmount();
+
+    // SAFETY: as above.
+    unsafe {
         libc::sync();
 
         libc::reboot(match request {

@@ -3,7 +3,9 @@
 //! The kernel runs `/init` from the initramfs as the first process. Its jobs:
 //!
 //! 1. mount the kernel's file systems (`/proc`, `/sys`, `/dev`, …);
-//! 2. give the machine its name and print the banner;
+//! 2. give the machine its name and print the banner, and mount the data
+//!    disk at `/data`, where what the session saves is kept across a
+//!    reboot (`storage.rs`);
 //! 3. start the **session** — `/bin/session`, a Saule program built with
 //!    `saule build` — as the unprivileged `display` account, with the screen
 //!    and input devices handed to it (`seat.rs`), and keep it going;
@@ -31,6 +33,7 @@ mod output;
 mod power;
 mod seat;
 mod session;
+mod storage;
 
 use cmdline::Cmdline;
 
@@ -48,6 +51,7 @@ fn main() {
     let cmdline = Cmdline::read();
     set_hostname();
     log::banner();
+    storage::mount_data();
 
     session::supervise(&cmdline);
 }

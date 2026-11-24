@@ -21,7 +21,7 @@ use crate::account::{self, Account, Switch};
 use crate::cmdline::{Cmdline, OnExit};
 use crate::output::Output;
 use crate::power::{self, Request};
-use crate::{console, log};
+use crate::{console, log, storage};
 
 const SHELL: &str = "/bin/sh";
 
@@ -251,13 +251,28 @@ fn command_for(
     if !account.is_root() {
         command.env("XDG_RUNTIME_DIR", account.runtime_dir());
     }
+    if storage::mounted() {
+        command.env("SAULE_DATA", storage::MOUNT);
+    }
+    // With the home on the data disk, caches stay behind in memory. A cache
+    // is rebuilt when it is missing, but one a power cut left half-written
+    // on the disk is found, and trusted, on every start after: a built
+    // Saule app unpacks its libraries into one, and a session that can't
+    // load them never starts again.
+    if home != account.home && account.home.is_dir() {
+        command.env("XDG_CACHE_HOME", account.home.join(".cache"));
+    }
     command.envs(env.iter().map(|(name, value)| (name, value)));
 
     command
 }
 
-/// Where `account` starts: its home, or `/` when it has none.
+/// Where `account` starts: its home on the data disk when there is one, so
+/// what it keeps there outlives a reboot; else its home in memory.
 fn home_of(account: &Account) -> PathBuf {
+    if let Some(home) = storage::home_for(&account.name, account.uid, account.gid) {
+        return home;
+    }
     if account.home.is_dir() {
         return account.home.clone();
     }

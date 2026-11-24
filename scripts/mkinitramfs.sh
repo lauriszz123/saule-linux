@@ -22,6 +22,8 @@
 #   NATIVE_LIBS    optional: native Saule packages (.so) the session may
 #                  load. They travel inside the session; what goes in the
 #                  tree is the shared libraries *they* need.
+#   FS_TOOLS       optional: mke2fs and e2fsck (e2fsprogs), installed in
+#                  /sbin: what init makes and checks the data disk with
 #   APPS_DIR       optional: a directory of apps built with `saule build`,
 #                  installed as /bin/apps/<name>
 #   DRIVERS_DIR    optional: a graphics driver pack (scripts/build-drivers.sh,
@@ -44,6 +46,7 @@ output=${1:?usage: mkinitramfs.sh OUTPUT.cpio.gz}
 BUSYBOX=${BUSYBOX:-}
 TOOLS_BUSYBOX=${TOOLS_BUSYBOX:-}
 NATIVE_LIBS=${NATIVE_LIBS:-}
+FS_TOOLS=${FS_TOOLS:-}
 FONTS=${FONTS:-}
 DRIVERS_DIR=${DRIVERS_DIR:-}
 APPS_DIR=${APPS_DIR:-}
@@ -87,6 +90,11 @@ fi
 
 for library in $NATIVE_LIBS; do
     add_libraries "$library"
+done
+
+# What init makes and checks the data disk's file system with.
+for tool in $FS_TOOLS; do
+    add_program "$tool" "/sbin/$(basename "$tool")"
 done
 
 for font in $FONTS; do
