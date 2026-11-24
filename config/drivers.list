@@ -1,0 +1,27 @@
+# Which graphics driver pack (scripts/build-drivers.sh) a chip needs, by its
+# PCI ids as /sys/bus/pci/devices/*/{vendor,device} give them. The first
+# line that matches wins; `*` is any device of that vendor. A display
+# controller nothing here names gets `software`.
+#
+# vendor:device   pack
+
+# Intel Gen3 (GMA 900 to 3150): the netbook's chip and its relatives.
+8086:2582   gen3
+8086:258a   gen3
+8086:2592   gen3
+8086:2772   gen3
+8086:27a2   gen3
+8086:27ae   gen3
+8086:29b2   gen3
+8086:29c2   gen3
+8086:29d2   gen3
+8086:a001   gen3
+8086:a011   gen3
+# Every other Intel chip: Gen4 (GMA X3000) to today's.
+8086:*      intel
+
+1002:*      amd
+10de:*      nvidia
+
+# QEMU's virtio GPU; with 3D off it still has to fall back to software.
+1af4:1050   virtual

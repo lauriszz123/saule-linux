@@ -20,6 +20,12 @@
 #   --slow[=PERCENT] run about as fast as the real netbook: KVM, with the
 #                    virtual CPUs capped at PERCENT of one CPU core
 #                    (default 8). See "Speed" below.
+#   --gl             the virtual GPU with 3D: the guest's OpenGL (Mesa's virgl,
+#                    from the `virtual` driver pack) runs on this machine's
+#                    GPU, the nearest QEMU comes to the netbook's GMA 3150
+#   --vesa           no graphics driver: the screen the BIOS set up (VESA,
+#                    1024x768), as the netbook would show if i915 failed
+#                    on its GMA 3150, or any PC whose chip has no driver
 #   --               everything after this goes to QEMU as it is
 #
 # The serial port is on this terminal in both modes (console=ttyS0).
@@ -67,7 +73,7 @@ set -euo pipefail
 
 QEMU=${QEMU:-qemu-system-x86_64}
 
-usb= kernel= initrd= append= nographic=0 bios_log= kvm=1 slow= memory=1G
+usb= kernel= initrd= append= nographic=0 bios_log= kvm=1 slow= memory=1G vesa=0 gl=0
 while [ $# -gt 0 ]; do
     case $1 in
         --usb)       usb=${2:?--usb needs an image};           shift 2 ;;
@@ -77,6 +83,8 @@ while [ $# -gt 0 ]; do
         --nographic) nographic=1;                              shift ;;
         --bios-log)  bios_log=${2:?--bios-log needs a file};   shift 2 ;;
         --no-kvm)    kvm=0;                                    shift ;;
+        --vesa)      vesa=1;                                   shift ;;
+        --gl)        gl=1;                                     shift ;;
         --slow)      slow=8;                                   shift ;;
         --memory)    memory=${2:?--memory needs a size, e.g. 2G};  shift 2 ;;
         --slow=*)    slow=${1#--slow=};                        shift ;;
@@ -150,9 +158,8 @@ args=(
     # which QEMU can't emulate. A plain emulated VGA would do, but QEMU
     # spots what changed on one by write-protecting its memory, and every
     # frame then costs the guest's CPU time no real chip charges; at
-    # --slow, that made a busy screen run at a third of its speed.
-    -vga none
-    -device virtio-vga,xres=1024,yres=600
+    # --slow, that made a busy screen run at a third of its speed. Added
+    # below, with --vesa's alternative.
 
     # USB 2.0 controller; the stick (if any) hangs off it.
     -device usb-ehci,id=ehci
@@ -172,6 +179,27 @@ args=(
     -nic none
 )
 
+# The screen: QEMU's paravirtual GPU, or with --vesa a plain VGA card
+# whose driver is kept from starting, so the kernel falls back to the
+# framebuffer the BIOS set up (simpledrm), as it would on a chip it has no
+# driver for. vga=0x318 asks the BIOS for 1024x768 at 24 bits; VESA has no
+# 1024x600 mode.
+if [ "$vesa" = 1 ]; then
+    args+=(-vga std)
+    append="vga=0x318 initcall_blacklist=bochs_pci_driver_init $append"
+elif [ "$gl" = 1 ]; then
+    args+=(-vga none -device virtio-vga-gl,xres=1024,yres=600)
+else
+    args+=(-vga none -device virtio-vga,xres=1024,yres=600)
+fi
+
+# Under WSL the Super key never reaches a Linux window: Windows keeps it
+# (Start, Win+D, Win+Space). So the window manager is told to use
+# Ctrl+Alt, as it does nested on Windows, unless the command line says.
+if [ -n "${WSL_DISTRO_NAME:-}" ] && [[ "$append" != *SAULE_WM_KEY* ]]; then
+    append="saule.env.SAULE_WM_KEY=ctrl+alt $append"
+fi
+
 if [ -n "$usb" ]; then
     [ -r "$usb" ] || { echo "qemu-netbook.sh: can't read $usb" >&2; exit 1; }
     args+=(
@@ -185,7 +213,9 @@ elif [ -n "$kernel" ]; then
     # the guest would shrink to fit a fresh 640x480 window rather than the
     # window growing to the netbook's screen. Shine takes a mode given here
     # over the preferred one.
-    append="video=Virtual-1:1024x600 $append"
+    if [ "$vesa" = 0 ]; then
+        append="video=Virtual-1:1024x600 $append"
+    fi
     # The last console= is the one /dev/console — and so the session — uses.
     if [ "$nographic" = 1 ]; then
         args+=(-append "console=tty1 console=ttyS0 $append")
@@ -197,6 +227,17 @@ fi
 if [ -n "$bios_log" ]; then
     args+=(-chardev "file,id=seabios,path=$bios_log"
            -device isa-debugcon,iobase=0x402,chardev=seabios)
+fi
+
+# The window's own OpenGL, which a 3D virtual GPU draws through. Under WSL
+# that is Windows' GPU through Mesa's D3D12 driver, which Mesa doesn't pick
+# by itself there (it would draw on this machine's CPU instead).
+gl_display=
+if [ "$gl" = 1 ]; then
+    gl_display=",gl=on"
+    if [ -e /dev/dxg ] && [ -z "${GALLIUM_DRIVER:-}" ]; then
+        export GALLIUM_DRIVER=d3d12
+    fi
 fi
 
 if [ "$nographic" = 1 ]; then
@@ -213,8 +254,14 @@ else
         *)
             if [ "$(uname -s)" = Darwin ]; then
                 mac_window=1
+            elif [ -n "${WSL_DISTRO_NAME:-}" ]; then
+                # Under WSL: QEMU's own keys (the screen's console on
+                # Ctrl+Alt+1, 2, …, full screen on Ctrl+Alt+F) on the right
+                # Ctrl alone, so the left Ctrl+Alt reaches the window
+                # manager, whose key it is here (see SAULE_WM_KEY above).
+                args+=(-display "sdl,grab-mod=rctrl$gl_display")
             else
-                args+=(-display sdl)
+                args+=(-display "sdl$gl_display")
             fi
             ;;
     esac

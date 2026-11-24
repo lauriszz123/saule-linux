@@ -8,7 +8,13 @@
 #                     will draw on)
 #   make run-netbook  boot it in QEMU dressed as the HP Mini 210-1001sa
 #                     (SLOW=1: at about its speed)
+#   make run-vesa     the same with no graphics driver: the BIOS's VESA
+#                     screen, the fallback for a chip with no driver
 #   make DEBUG=1 run  include BusyBox: a shell when the session ends
+#   make drivers      build the graphics driver pack DRIVERS (default virtual,
+#                     QEMU's GPU) that the image then carries
+#   make apps         build only the apps, into build/apps (for the window
+#                     manager nested on a desktop: see saule-wm's README)
 #
 #   make menuconfig   change kernel options (copy keepers to config/kernel.config)
 #   make check-config list options config/kernel.config asked for but didn't get
@@ -66,6 +72,11 @@ endif
 # the shared libraries they load. And the fonts Shine looks for.
 SAULE_HOME  ?= $(HOME)/.saule
 NATIVE_LIBS ?= $(wildcard $(SAULE_HOME)/native_packages/*.so)
+# The graphics driver pack put in the image (scripts/build-drivers.sh; `make
+# drivers` builds it): `virtual` is QEMU's GPU, `gen3` the netbook's. An
+# image without one draws on the CPU, as it always could.
+DRIVERS     ?= virtual
+DRIVERS_DIR := $(wildcard $(BUILD)/drivers/$(DRIVERS))
 FONTS       ?= $(wildcard /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
                           /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)
 
@@ -101,7 +112,7 @@ ifeq ($(HOST_OS),Darwin)
   VNC_OPEN = open vnc://127.0.0.1:5901
 endif
 
-.PHONY: all kernel init session initramfs run run-gui run-vnc run-netbook menuconfig check-config clean distclean
+.PHONY: all kernel init session apps drivers initramfs run run-gui run-vnc run-netbook run-vesa menuconfig check-config clean distclean
 
 ifeq ($(HOST_OS),Darwin)
 
@@ -167,6 +178,17 @@ $(GEN_CPIO): $(KSRC)/Makefile
 session:
 	@test -n "$(SAULE)" || { echo "saule not found: install it or pass SAULE=/path/to/saule"; exit 1; }
 	$(SAULE) build $(APP) -o $(SESSION)
+
+# The graphics driver pack DRIVERS names, into build/drivers/<pack>: Mesa and
+# libdrm, built from source (needs meson, ninja and python3-mako). Once is
+# enough; the image takes it from there.
+drivers:
+	scripts/build-drivers.sh $(DRIVERS)
+
+# The apps alone, into build/apps: also what the window manager, nested on a
+# desktop, opens with `SAULE_APPS=../saule-linux/build/apps saule run .`.
+apps:
+	@test -n "$(SAULE)" || { echo "saule not found: install it or pass SAULE=/path/to/saule"; exit 1; }
 	rm -rf $(APPS_OUT)
 	mkdir -p $(APPS_OUT)
 	for app in $(APPS); do \
@@ -174,12 +196,12 @@ session:
 		$(SAULE) build $$app -o $(APPS_OUT)/$${name:-$$(basename $$app)} || exit 1; \
 	done
 
-initramfs: init session $(GEN_CPIO)
+initramfs: init session apps $(GEN_CPIO)
 	@test "$(DEBUG)" != 1 -o -n "$(BUSYBOX)" || { echo "DEBUG=1 needs busybox (apt install busybox-static) or BUSYBOX=/path"; exit 1; }
 	@test "$(TOOLS)" != 1 -o -n "$(BUSYBOX)" || { echo "TOOLS=1 needs busybox (apt install busybox-static) or BUSYBOX=/path; TOOLS=0 builds without"; exit 1; }
 	STAGE=$(BUILD)/rootfs GEN_INIT_CPIO=$(GEN_CPIO) INIT=$(INIT) SESSION=$(SESSION) \
 	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) APPS_DIR=$(APPS_OUT) \
-	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" \
+	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" DRIVERS_DIR="$(DRIVERS_DIR)" \
 	scripts/mkinitramfs.sh $(INITRAMFS)
 
 endif  # not Darwin
@@ -217,9 +239,18 @@ run-vnc: all
 SLOW   ?=
 MEMORY ?= 1G
 NETBOOK_SLOW := $(if $(filter 1 yes,$(SLOW)),--slow,$(if $(SLOW),--slow=$(SLOW)))
+# GL=1: the virtual GPU with 3D, for drawing on the GPU (the `virtual` pack).
+GL     ?=
+NETBOOK_GL := $(if $(filter 1 yes,$(GL)),--gl)
 run-netbook: all
 	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) \
-		--memory $(MEMORY) $(NETBOOK_SLOW) --append "$(APPEND)"
+		--memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL) --append "$(APPEND)"
+
+# The netbook with no graphics driver: the screen the BIOS set up, drawn
+# through simpledrm. What it would show if i915 failed on its chip.
+run-vesa: all
+	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) \
+		--memory $(MEMORY) $(NETBOOK_SLOW) --vesa --append "$(APPEND)"
 
 # ---------------------------------------------------------------------------
 

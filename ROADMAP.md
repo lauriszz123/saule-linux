@@ -53,6 +53,12 @@ at about its speed).
 - [ ] **Logs**:
   - init's messages go to `/dev/kmsg`, so they show in `dmesg`;
   - the session's stderr is kept in `/run/session.log`.
+- [x] **Graphics for the netbook**, as far as QEMU can check it: i915
+      (with AGP_INTEL's GTT) for its GMA 3150, built in, no firmware
+      files; it first runs on the real machine, since QEMU can't emulate
+      the chip. The fallback when a chip has no driver, the screen the
+      BIOS set up through simpledrm, runs in `make run-vesa`. About This
+      System names the card (PCI ids, `pci.ids` where there is one).
 - [ ] **Real-time clock**, so `Os.date()` is right.
 - [ ] **No glibc in the image**: needs the static musl runner (phase 2).
 
