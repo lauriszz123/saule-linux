@@ -15,6 +15,12 @@ pub struct Cmdline {
     /// The account the session runs as (`/etc/passwd`).
     pub user: String,
     pub on_exit: OnExit,
+    /// Variables for the session's environment, from `saule.env.NAME=value`:
+    /// how to switch on a program's own diagnostics on a machine with no
+    /// shell (`saule.env.SHINE_TRACE_FRAMES=1` puts the window manager's
+    /// frame times on the console). The session otherwise starts with a
+    /// clean environment.
+    pub env: Vec<(String, String)>,
 }
 
 impl Cmdline {
@@ -32,6 +38,7 @@ impl Cmdline {
             } else {
                 OnExit::PowerOff
             },
+            env: Vec::new(),
         };
 
         for word in text.split_whitespace() {
@@ -49,7 +56,12 @@ impl Cmdline {
                     "shell" => cmdline.on_exit = OnExit::Shell,
                     other => crate::log::warn(&format!("unknown saule.on_exit={other}, ignored")),
                 },
-                _ => {}
+                _ => {
+                    let name = key.strip_prefix("saule.env.").unwrap_or("");
+                    if !name.is_empty() {
+                        cmdline.env.push((name.into(), value.into()));
+                    }
+                }
             }
         }
 

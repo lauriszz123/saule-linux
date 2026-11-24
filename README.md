@@ -94,6 +94,7 @@ Kernel command line options read by init:
 | `saule.session=PATH` | `/bin/session` | the executable to run as the session |
 | `saule.user=NAME` | `display` | the account it runs as; `root` only when you ask for it |
 | `saule.on_exit=…` | `shell` if `/bin/sh` exists, else `poweroff` | `poweroff`, `reboot`, `restart` or `shell` |
+| `saule.env.NAME=value` | | adds `NAME=value` to the session's otherwise clean environment, e.g. `saule.env.SHINE_TRACE_FRAMES=1` for its frame times on the console |
 
 How the session ends is a request init acts on, since the session runs as
 `display` and may not power the machine off itself (the window manager's

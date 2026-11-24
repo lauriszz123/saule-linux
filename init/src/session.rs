@@ -59,7 +59,7 @@ pub fn supervise(cmdline: &Cmdline) -> ! {
 
         let started = Instant::now();
         let outcome = match session_account(&cmdline.user) {
-            Ok(account) => run(&cmdline.session, &[], &account),
+            Ok(account) => run(&cmdline.session, &[], &cmdline.env, &account),
             Err(error) => Outcome::NotStarted(error),
         };
         console::reset_vt();
@@ -160,7 +160,7 @@ fn shell() {
         home: "/root".into(),
     });
 
-    match run(SHELL, &["-l"], &root) {
+    match run(SHELL, &["-l"], &[], &root) {
         Outcome::Power(request) => power::shutdown(request),
         Outcome::NotStarted(error) => log::warn(&format!("could not start {SHELL}: {error}")),
         _ => {}
@@ -170,7 +170,7 @@ fn shell() {
 /// Start `program` on the console as `account` and wait for it, reaping any
 /// other process that dies meanwhile. Returns early if a power signal
 /// arrives.
-fn run(program: &str, args: &[&str], account: &Account) -> Outcome {
+fn run(program: &str, args: &[&str], env: &[(String, String)], account: &Account) -> Outcome {
     let device = console::device();
     let tty = match CString::new(device.clone()) {
         Ok(tty) => tty,
@@ -216,6 +216,9 @@ fn run(program: &str, args: &[&str], account: &Account) -> Outcome {
     if !account.is_root() {
         command.env("XDG_RUNTIME_DIR", account.runtime_dir());
     }
+
+    // `saule.env.NAME=value` from the kernel command line.
+    command.envs(env.iter().map(|(name, value)| (name, value)));
 
     // Root stays root; anyone else is switched to in the child, after it
     // has taken the terminal (which needs root).
