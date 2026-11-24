@@ -202,7 +202,7 @@ initramfs: init session apps $(GEN_CPIO)
 	STAGE=$(BUILD)/rootfs GEN_INIT_CPIO=$(GEN_CPIO) INIT=$(INIT) SESSION=$(SESSION) \
 	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) APPS_DIR=$(APPS_OUT) \
 	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" DRIVERS_DIR="$(DRIVERS_DIR)" \
-	scripts/mkinitramfs.sh $(INITRAMFS)
+	WALLPAPERS="$(wildcard $(WM)/wallpapers)" scripts/mkinitramfs.sh $(INITRAMFS)
 
 endif  # not Darwin
 

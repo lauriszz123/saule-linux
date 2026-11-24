@@ -29,6 +29,9 @@
 #                  copies of the same libraries brought in for programs
 #   FONTS          optional: font files, installed at the same path as on
 #                  the build host (where Shine looks for them)
+#   WALLPAPERS     optional: a directory of wallpaper photographs (the
+#                  window manager's wallpapers/), installed in
+#                  /usr/share/saule/wallpapers
 #
 # Dynamically linked binaries bring the libraries `ldd` names for them.
 # The tree is packed with root as the owner of every file.
@@ -89,6 +92,12 @@ done
 for font in $FONTS; do
     install -D -m 0644 "$font" "$STAGE$font"
 done
+
+if [ -n "${WALLPAPERS:-}" ] && [ -d "$WALLPAPERS" ]; then
+    for photo in "$WALLPAPERS"/*.jpg; do
+        install -D -m 0644 "$photo" "$STAGE/usr/share/saule/wallpapers/$(basename "$photo")"
+    done
+fi
 
 # The graphics drivers: every library of the pack, symlinks as they are, and
 # what they load from the host (libstdc++, zlib). Last, so the pack's libdrm
