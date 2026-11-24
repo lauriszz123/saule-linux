@@ -20,6 +20,10 @@
 #   --slow[=PERCENT] run about as fast as the real netbook: KVM, with the
 #                    virtual CPUs capped at PERCENT of one CPU core
 #                    (default 8). See "Speed" below.
+#   --disk FILE      the hard disk: a disk image, made the first time as
+#                    an empty 250 GB disk that takes up only what is
+#                    written to it (default: disks/netbook.qcow2)
+#   --no-disk        no hard disk, as a machine with its drive taken out
 #   --gl             the virtual GPU with 3D: the guest's OpenGL (Mesa's virgl,
 #                    from the `virtual` driver pack) runs on this machine's
 #                    GPU, the nearest QEMU comes to the netbook's GMA 3150
@@ -44,6 +48,11 @@
 #                                     the BIOS) preferring 1024x600 — there is
 #                                     no i915 emulation; the real machine's
 #                                     driver is only testable on it
+#   250 GB 2.5" SATA hard disk,     a 250 GB disk image on the chipset's
+#     5400 rpm                        SATA controller (AHCI), named as a
+#                                     Hitachi Travelstar of the time; empty
+#                                     until Saule Linux formats it, and
+#                                     kept between runs
 #   USB 2.0 (EHCI), USB stick       EHCI controller + usb-storage, bootable
 #   PS/2 keyboard, Synaptics pad    PS/2 keyboard + PS/2 mouse (the touchpad
 #                                     shows up as a plain mouse), and a USB
@@ -77,6 +86,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 # What the options set. `append` grows as the machine is put together:
 # several parts of it need a kernel option of their own.
 usb= kernel= initrd= append= nographic=0 bios_log= kvm=1 slow= memory=1G vesa=0 gl=0
+disk=$repo/disks/netbook.qcow2
 extra=()     # everything after `--`, for QEMU as it is
 args=()      # QEMU's command line
 mac_window=0
@@ -102,6 +112,8 @@ parse_options() {
             --no-kvm)    kvm=0;                                    shift ;;
             --vesa)      vesa=1;                                   shift ;;
             --gl)        gl=1;                                     shift ;;
+            --disk)      disk=${2:?--disk needs an image file};    shift 2 ;;
+            --no-disk)   disk=;                                    shift ;;
             --slow)      slow=8;                                   shift ;;
             --slow=*)    slow=${1#--slow=};                        shift ;;
             --memory)    memory=${2:?--memory needs a size, e.g. 2G}; shift 2 ;;
@@ -218,6 +230,25 @@ add_screen() {
     else
         args+=(-vga none -device virtio-vga,xres=1024,yres=600)
     fi
+}
+
+# The hard disk, made the first time. The real one is 250 GB; the image only
+# grows as the guest writes to it (qcow2), and runs of zeros written take no
+# room at all. It lives outside build/, so cleaning the build never takes
+# what was saved on it.
+add_hard_disk() {
+    [ -n "$disk" ] || return 0
+    if [ ! -e "$disk" ]; then
+        mkdir -p "$(dirname "$disk")"
+        # The Travelstar 5K500.B's exact size: 488,397,168 sectors of 512
+        # bytes, "250 GB" as drive makers count.
+        qemu-img create -q -f qcow2 "$disk" 250059350016
+        echo "qemu-netbook.sh: made an empty 250 GB hard disk: $disk"
+    fi
+    args+=(
+        -drive "if=none,id=hdd,format=qcow2,file=$disk,discard=unmap,detect-zeroes=unmap"
+        -device "ide-hd,bus=ide.0,drive=hdd,model=Hitachi HTS545025B9A300,serial=091224PBN403QSGXB1BG,rotation_rate=5400"
+    )
 }
 
 # What it boots from: a USB stick through the BIOS, the kernel loaded
@@ -399,6 +430,7 @@ parse_options "$@"
 check_options
 add_machine
 add_screen
+add_hard_disk
 add_boot_medium
 add_window
 if [ "$mac_window" = 1 ]; then
