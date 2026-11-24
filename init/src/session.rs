@@ -1,22 +1,25 @@
 //! Starting the session and keeping it alive.
 //!
 //! The session is the one program the machine exists to run: a Saule
-//! project built into one executable with `saule build` — today a
-//! hello-world, later the display server. Init starts it, waits, and decides
-//! what happens when it ends:
+//! project built into one executable with `saule build` — the window
+//! manager, or the hello-world in `session/`. Init starts it, waits, and
+//! decides what happens when it ends:
 //!
 //! - it **returned** (exit code 0)  → follow `saule.on_exit`;
+//! - it **asked** for something (exit codes 80–82) → power off, reboot, or
+//!   start a new session;
 //! - it **crashed** (non-zero/signal) → start it again after a second; if it
 //!   keeps crashing straight away, stop and fall back to a shell or power off.
 
 use std::ffi::CString;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::account::{self, Account, Switch};
 use crate::cmdline::{Cmdline, OnExit};
+use crate::output::Output;
 use crate::power::{self, Request};
 use crate::{console, log};
 
@@ -171,54 +174,17 @@ fn shell() {
 /// other process that dies meanwhile. Returns early if a power signal
 /// arrives.
 fn run(program: &str, args: &[&str], env: &[(String, String)], account: &Account) -> Outcome {
-    let device = console::device();
-    let tty = match CString::new(device.clone()) {
+    let tty = match CString::new(console::device()) {
         Ok(tty) => tty,
         Err(error) => return Outcome::NotStarted(error.into()),
     };
-
-    // With more than one console — the screen and a serial line, as QEMU
-    // and a debugging setup have — what the session prints goes to all of
-    // them. It runs on the screen's terminal, and a session that draws
-    // covers that terminal: its errors, the one thing needed when it
-    // fails, were on a console nobody could read. So its output goes
-    // through a pipe that init copies to every console. With one console
-    // it writes to its terminal directly, as before.
-    let consoles = console::devices();
-    let output = if consoles.len() > 1 {
-        match Output::new(consoles) {
-            Ok(output) => Some(output),
-            Err(error) => return Outcome::NotStarted(error),
-        }
-    } else {
-        None
+    let output = match Output::for_consoles(console::devices()) {
+        Ok(output) => output,
+        Err(error) => return Outcome::NotStarted(error),
     };
-    let write_end = output.as_ref().map(|o| o.write_end);
+    let write_end = output.as_ref().map(Output::write_end);
 
-    let home = if account.home.is_dir() {
-        account.home.as_path()
-    } else {
-        Path::new("/")
-    };
-
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .current_dir(home)
-        .env_clear()
-        .env("PATH", "/bin:/usr/bin")
-        .env("HOME", home)
-        .env("USER", &account.name)
-        .env("LOGNAME", &account.name)
-        .env("TERM", "linux")
-        .env("LANG", "C.UTF-8");
-
-    if !account.is_root() {
-        command.env("XDG_RUNTIME_DIR", account.runtime_dir());
-    }
-
-    // `saule.env.NAME=value` from the kernel command line.
-    command.envs(env.iter().map(|(name, value)| (name, value)));
+    let mut command = command_for(program, args, env, account);
 
     // Root stays root; anyone else is switched to in the child, after it
     // has taken the terminal (which needs root).
@@ -256,10 +222,52 @@ fn run(program: &str, args: &[&str], env: &[(String, String)], account: &Account
         output.copy_in_background();
     }
 
-    let pid = child.id() as libc::pid_t;
+    wait_for(child.id() as libc::pid_t)
+}
 
-    // Not `child.wait()`: init must also reap orphans, so it waits for any
-    // process and only stops when the one it started is among them.
+/// `program` with the environment a session starts in: clean, but for who
+/// it is, where its home is, and `saule.env.NAME=value` from the kernel
+/// command line.
+fn command_for(
+    program: &str,
+    args: &[&str],
+    env: &[(String, String)],
+    account: &Account,
+) -> Command {
+    let home = home_of(account);
+
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(&home)
+        .env_clear()
+        .env("PATH", "/bin:/usr/bin")
+        .env("HOME", &home)
+        .env("USER", &account.name)
+        .env("LOGNAME", &account.name)
+        .env("TERM", "linux")
+        .env("LANG", "C.UTF-8");
+
+    if !account.is_root() {
+        command.env("XDG_RUNTIME_DIR", account.runtime_dir());
+    }
+    command.envs(env.iter().map(|(name, value)| (name, value)));
+
+    command
+}
+
+/// Where `account` starts: its home, or `/` when it has none.
+fn home_of(account: &Account) -> PathBuf {
+    if account.home.is_dir() {
+        return account.home.clone();
+    }
+    PathBuf::from("/")
+}
+
+/// Wait until process `pid` ends. Not `Child::wait`: init must also reap
+/// orphans, so it waits for any process and only stops when the one it
+/// started is among them.
+fn wait_for(pid: libc::pid_t) -> Outcome {
     loop {
         let mut status = 0;
 
@@ -292,74 +300,5 @@ fn run(program: &str, args: &[&str], env: &[(String, String)], account: &Account
         if libc::WIFSIGNALED(status) {
             return Outcome::Killed(libc::WTERMSIG(status));
         }
-    }
-}
-
-/// The pipe a session's output goes through on its way to every console.
-struct Output {
-    read_end: libc::c_int,
-    write_end: libc::c_int,
-    consoles: Vec<String>,
-}
-
-impl Output {
-    fn new(consoles: Vec<String>) -> std::io::Result<Output> {
-        let mut fds = [0; 2];
-        // Close-on-exec: the session gets the write end as its stdout and
-        // stderr (`dup2` clears the flag on those), and nothing else it
-        // runs inherits the originals.
-        // SAFETY: `fds` has room for the two descriptors pipe2 writes.
-        if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(Output {
-            read_end: fds[0],
-            write_end: fds[1],
-            consoles,
-        })
-    }
-
-    /// The session never started: nothing will use the pipe.
-    fn close(self) {
-        // SAFETY: both were made by `new` and nothing else closes them.
-        unsafe {
-            libc::close(self.read_end);
-            libc::close(self.write_end);
-        }
-    }
-
-    /// Once the session has started: let go of init's write end, so the
-    /// pipe ends when the session and the apps it started have closed
-    /// theirs, and copy what arrives to every console until then.
-    fn copy_in_background(self) {
-        use std::io::{Read, Write};
-        use std::os::fd::FromRawFd;
-
-        // SAFETY: both descriptors were made by `new` and are owned here;
-        // each is closed exactly once (`File` closes the read end on drop).
-        unsafe { libc::close(self.write_end) };
-        let mut pipe = unsafe { std::fs::File::from_raw_fd(self.read_end) };
-
-        let mut consoles: Vec<std::fs::File> = self
-            .consoles
-            .iter()
-            .filter_map(|path| std::fs::OpenOptions::new().write(true).open(path).ok())
-            .collect();
-
-        std::thread::spawn(move || {
-            let mut buffer = [0u8; 4096];
-            loop {
-                match pipe.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        for console in &mut consoles {
-                            let _ = console.write_all(&buffer[..n]);
-                        }
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(_) => break,
-                }
-            }
-        });
     }
 }

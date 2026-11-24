@@ -27,6 +27,7 @@ mod cmdline;
 mod console;
 mod log;
 mod mounts;
+mod output;
 mod power;
 mod seat;
 mod session;
