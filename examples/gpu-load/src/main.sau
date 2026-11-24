@@ -1,0 +1,55 @@
+--[[
+A steady drawing load, for seeing where drawing runs: a gradient, a hundred
+and fifty moving see-through cards with rounded corners, text, and a turning
+image, every frame. Run it inside the window manager on Saule Linux:
+
+  make APPS="examples/gpu-load" GL=1 run-netbook
+
+then open "Gpu-load" from the launcher, and compare the guest's CPU time
+with drawing on the GPU and with `APPEND="saule.env.SHINE_GPU_DRAW=0"`.
+`saule.env.SHINE_TRACE_FRAMES=1` prints where each frame's time goes.
+]]
+from shine import Graphics, Timer, Window
+
+class Main
+  static fn main()
+    Window.create(800, 500, title: "Gpu-load")
+    local image = Graphics.newCanvas(64, 64)
+    Graphics.setCanvas(image)
+    Graphics.clear(.9, .6, .2, 1.0)
+    Graphics.setColor(1.0, 1.0, 1.0, 1.0)
+    Graphics.circle("fill", 32.0, 32.0, 20.0)
+    Graphics.setCanvas()
+
+    local start = Timer.getTime()
+    while Window.isOpen() do
+      Window.pollEvents()
+      local t = Timer.getTime() - start
+      local w, h = Window.getSize()
+      local fw = w as float
+      local fh = h as float
+
+      Graphics.setLinearGradient(0.0, 0.0, fw, fh, {
+        0.0, 0.10, 0.12, 0.30, 1.0,
+        1.0, 0.80, 0.45, 0.50, 1.0,
+      })
+      Graphics.rectangle("fill", 0.0, 0.0, fw, fh)
+      Graphics.clearGradient()
+
+      for i = 0, 149 do
+        local fi = i as float
+        local x = (Math.sin(t * 0.7 + fi * 0.37) * 0.5 + 0.5) * (fw - 120.0)
+        local y = (Math.cos(t * 0.5 + fi * 0.21) * 0.5 + 0.5) * (fh - 60.0)
+        Graphics.setColor(0.2 + (i % 5) as float * 0.15, 0.5, 0.9 - (i % 7) as float * 0.1, 0.35)
+        Graphics.rectangle("fill", x, y, 120.0, 60.0, 10.0)
+      end
+
+      Graphics.setColor(1.0, 1.0, 1.0, 1.0)
+      for line = 0, 11 do
+        Graphics.print("Line " .. tostring(line) .. ": drawing on the GPU, t = " .. tostring(Math.floor(t * 10.0)), 12.0, 12.0 + (line * 18) as float)
+      end
+      Graphics.draw(image, fw / 2.0, fh / 2.0, t, 2.0, 2.0, 32.0, 32.0)
+      Graphics.present()
+    end
+  end
+end
