@@ -142,7 +142,8 @@ args=(
     -cpu "$cpu"
     -smp "$smp"
     -m "$memory"
-    -no-reboot
+    # No -no-reboot: Restart boots it again, as it does the netbook.
+    # Shut Down still ends QEMU.
 
     # Screen: QEMU's paravirtual GPU (with a VGA side for the BIOS), whose
     # display prefers the panel's 1024x600. Not the netbook's GMA 3150,
