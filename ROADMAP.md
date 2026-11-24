@@ -46,10 +46,16 @@ at about its speed).
       way a real PC will.
 - [ ] **`make usb DEVICE=…`**: write a FAT32 EFI partition to a stick, and
       boot a real PC from it.
-- [ ] **Persistent storage**: a `/data` partition mounted by init, so saved
-      projects survive a reboot. This needs disk drivers in the kernel
-      (virtio-blk, AHCI, NVMe, USB storage), a file system, and a disk
-      image for `make run`.
+- [x] **Persistent storage**: init mounts a data disk at `/data` (an ext
+      file system labelled `SAULE`; an internal disk that is completely
+      empty is partitioned and formatted for it, one with anything on it is
+      never touched), and the session's home is on it, so settings survive
+      a reboot. The kernel has AHCI, IDE-mode SATA and USB storage, and
+      ext4; `make run-netbook` has the netbook's 250 GB disk
+      (`disks/netbook.qcow2`, kept between runs).
+  - [x] safe against a power cut: ext4 with a journal, `e2fsck` before
+        mounting, synchronous writes, and caches kept in memory;
+  - [ ] NVMe and virtio-blk, for other machines.
 - [ ] **Logs**:
   - init's messages go to `/dev/kmsg`, so they show in `dmesg`;
   - the session's stderr is kept in `/run/session.log`.
