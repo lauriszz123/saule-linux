@@ -68,3 +68,61 @@ impl Cmdline {
         cmdline
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_without_any_option() {
+        let cmdline = Cmdline::parse("console=ttyS0 quiet");
+        assert_eq!(cmdline.session, "/bin/session");
+        assert_eq!(cmdline.user, "display");
+        assert!(cmdline.env.is_empty());
+    }
+
+    #[test]
+    fn the_session_and_its_account() {
+        let cmdline = Cmdline::parse("saule.session=/bin/apps/bench saule.user=root");
+        assert_eq!(cmdline.session, "/bin/apps/bench");
+        assert_eq!(cmdline.user, "root");
+    }
+
+    #[test]
+    fn every_on_exit() {
+        for (word, expected) in [
+            ("poweroff", OnExit::PowerOff),
+            ("reboot", OnExit::Reboot),
+            ("restart", OnExit::Restart),
+            ("shell", OnExit::Shell),
+        ] {
+            let cmdline = Cmdline::parse(&format!("saule.on_exit={word}"));
+            assert_eq!(cmdline.on_exit, expected);
+        }
+    }
+
+    #[test]
+    fn an_unknown_on_exit_keeps_the_one_before() {
+        let cmdline = Cmdline::parse("saule.on_exit=restart saule.on_exit=explode");
+        assert_eq!(cmdline.on_exit, OnExit::Restart);
+    }
+
+    #[test]
+    fn environment_for_the_session() {
+        let cmdline = Cmdline::parse("saule.env.SAULE_LOG=wm=debug saule.env.A=1 saule.env.=x");
+        assert_eq!(
+            cmdline.env,
+            [
+                ("SAULE_LOG".to_string(), "wm=debug".to_string()),
+                ("A".to_string(), "1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn other_options_are_the_kernel_s() {
+        let cmdline = Cmdline::parse("video=Virtual-1:1024x600 saule saule.unknown=1");
+        assert_eq!(cmdline.session, "/bin/session");
+        assert!(cmdline.env.is_empty());
+    }
+}
