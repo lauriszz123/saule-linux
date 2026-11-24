@@ -202,14 +202,62 @@ if [ "$nographic" = 1 ]; then
     args+=(-nographic)
 else
     args+=(-serial stdio)
-    # An SDL window, sized to the screen. QEMU's GTK window doesn't follow
-    # the virtual GPU's screen size (it expects the guest to follow the
-    # window instead), so it stayed at 640x480 and cut the netbook's screen
-    # off. Unless a display was asked for after `--`.
+    # A window sized to the screen, unless a display was asked for after
+    # `--`. On a Mac, QEMU's own (see mac_window below); elsewhere SDL:
+    # QEMU's GTK window doesn't follow the virtual GPU's screen size (it
+    # expects the guest to follow the window instead), so it stayed at
+    # 640x480 and cut the netbook's screen off.
     case " $* " in
         *" -display "* | *" -nographic "*) ;;
-        *) args+=(-display sdl) ;;
+        *)
+            if [ "$(uname -s)" = Darwin ]; then
+                mac_window=1
+            else
+                args+=(-display sdl)
+            fi
+            ;;
     esac
+fi
+
+# On a Mac: the netbook's screen at its own size, one netbook pixel to one
+# point. QEMU draws a guest pixel to each *physical* pixel of a Retina
+# screen, so 1024x600 showed at a quarter of the netbook's size, and its
+# zoom-to-fit scaling keeps rescaling the picture, which shakes. An app
+# that says it can't do Retina is drawn by macOS at 1x and every pixel
+# doubled: so QEMU runs from a copy of itself in a small .app that says so
+# (build/qemu-netbook.app, made once and again when QEMU is upgraded).
+# The copy finds its firmware by -L, as it no longer sits beside it.
+# full-grab: Cmd+Space and the other shortcuts macOS takes reach the
+# window manager inside.
+if [ "${mac_window:-0}" = 1 ]; then
+    real=$(command -v "$QEMU") && real=$(readlink -f "$real") || {
+        echo "qemu-netbook.sh: $QEMU not found" >&2
+        exit 1
+    }
+    repo=$(cd "$(dirname "$0")/.." && pwd)
+    app=$repo/build/qemu-netbook.app
+    copy=$app/Contents/MacOS/$(basename "$real")
+    if [ ! -x "$copy" ] || [ "$real" -nt "$copy" ]; then
+        mkdir -p "$app/Contents/MacOS"
+        cp "$real" "$copy"
+        cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key><string>$(basename "$real")</string>
+  <key>CFBundleIdentifier</key><string>org.saule.qemu-netbook</string>
+  <key>CFBundleName</key><string>HP Mini 210</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>NSHighResolutionCapable</key><false/>
+</dict>
+</plist>
+PLIST
+        # A copied binary needs signing again before macOS runs it.
+        codesign --force --sign - "$copy" >/dev/null 2>&1
+    fi
+    QEMU=$copy
+    args+=(-L "$(dirname "$real")/../share/qemu" -display cocoa,full-grab=on)
 fi
 
 if [ -n "$slow" ]; then

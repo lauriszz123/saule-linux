@@ -33,6 +33,17 @@ enum Outcome {
     NotStarted(std::io::Error),
 }
 
+/// What a session asks for by how it exits: the window manager's Shut
+/// Down, Restart and Log Out. It runs as `display`, which may not signal
+/// init or reboot the machine; the one thing it can always do is end, and
+/// how it ends is init's to act on. Only the session init started can ask
+/// this way, so no other program can turn the machine off.
+///
+/// Exit code 0 is a session that simply ended: `saule.on_exit` decides.
+pub const EXIT_POWER_OFF: i32 = 80;
+pub const EXIT_REBOOT: i32 = 81;
+pub const EXIT_LOG_OUT: i32 = 82;
+
 pub fn has_shell() -> bool {
     Path::new(SHELL).exists()
 }
@@ -59,6 +70,13 @@ pub fn supervise(cmdline: &Cmdline) -> ! {
                 log::info("session ended");
                 quick_crashes = 0;
                 after_exit(cmdline.on_exit);
+                continue;
+            }
+            Outcome::Exited(EXIT_POWER_OFF) => power::shutdown(Request::PowerOff),
+            Outcome::Exited(EXIT_REBOOT) => power::shutdown(Request::Reboot),
+            Outcome::Exited(EXIT_LOG_OUT) => {
+                log::info("logged out");
+                quick_crashes = 0;
                 continue;
             }
             Outcome::Exited(code) => format!("session exited with code {code}"),
@@ -153,10 +171,29 @@ fn shell() {
 /// other process that dies meanwhile. Returns early if a power signal
 /// arrives.
 fn run(program: &str, args: &[&str], account: &Account) -> Outcome {
-    let tty = match CString::new(console::device()) {
+    let device = console::device();
+    let tty = match CString::new(device.clone()) {
         Ok(tty) => tty,
         Err(error) => return Outcome::NotStarted(error.into()),
     };
+
+    // With more than one console — the screen and a serial line, as QEMU
+    // and a debugging setup have — what the session prints goes to all of
+    // them. It runs on the screen's terminal, and a session that draws
+    // covers that terminal: its errors, the one thing needed when it
+    // fails, were on a console nobody could read. So its output goes
+    // through a pipe that init copies to every console. With one console
+    // it writes to its terminal directly, as before.
+    let consoles = console::devices();
+    let output = if consoles.len() > 1 {
+        match Output::new(consoles) {
+            Ok(output) => Some(output),
+            Err(error) => return Outcome::NotStarted(error),
+        }
+    } else {
+        None
+    };
+    let write_end = output.as_ref().map(|o| o.write_end);
 
     let home = if account.home.is_dir() {
         account.home.as_path()
@@ -189,6 +226,13 @@ fn run(program: &str, args: &[&str], account: &Account) -> Outcome {
     unsafe {
         command.pre_exec(move || {
             console::take_over(&tty)?;
+            // The terminal stays stdin and the controlling terminal, for
+            // Ctrl-C; only the output goes to the pipe.
+            if let Some(fd) = write_end {
+                if libc::dup2(fd, 1) < 0 || libc::dup2(fd, 2) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
             match &switch {
                 Some(switch) => switch.apply(),
                 None => Ok(()),
@@ -198,8 +242,16 @@ fn run(program: &str, args: &[&str], account: &Account) -> Outcome {
 
     let child = match command.spawn() {
         Ok(child) => child,
-        Err(error) => return Outcome::NotStarted(error),
+        Err(error) => {
+            if let Some(output) = output {
+                output.close();
+            }
+            return Outcome::NotStarted(error);
+        }
     };
+    if let Some(output) = output {
+        output.copy_in_background();
+    }
 
     let pid = child.id() as libc::pid_t;
 
@@ -237,5 +289,74 @@ fn run(program: &str, args: &[&str], account: &Account) -> Outcome {
         if libc::WIFSIGNALED(status) {
             return Outcome::Killed(libc::WTERMSIG(status));
         }
+    }
+}
+
+/// The pipe a session's output goes through on its way to every console.
+struct Output {
+    read_end: libc::c_int,
+    write_end: libc::c_int,
+    consoles: Vec<String>,
+}
+
+impl Output {
+    fn new(consoles: Vec<String>) -> std::io::Result<Output> {
+        let mut fds = [0; 2];
+        // Close-on-exec: the session gets the write end as its stdout and
+        // stderr (`dup2` clears the flag on those), and nothing else it
+        // runs inherits the originals.
+        // SAFETY: `fds` has room for the two descriptors pipe2 writes.
+        if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Output {
+            read_end: fds[0],
+            write_end: fds[1],
+            consoles,
+        })
+    }
+
+    /// The session never started: nothing will use the pipe.
+    fn close(self) {
+        // SAFETY: both were made by `new` and nothing else closes them.
+        unsafe {
+            libc::close(self.read_end);
+            libc::close(self.write_end);
+        }
+    }
+
+    /// Once the session has started: let go of init's write end, so the
+    /// pipe ends when the session and the apps it started have closed
+    /// theirs, and copy what arrives to every console until then.
+    fn copy_in_background(self) {
+        use std::io::{Read, Write};
+        use std::os::fd::FromRawFd;
+
+        // SAFETY: both descriptors were made by `new` and are owned here;
+        // each is closed exactly once (`File` closes the read end on drop).
+        unsafe { libc::close(self.write_end) };
+        let mut pipe = unsafe { std::fs::File::from_raw_fd(self.read_end) };
+
+        let mut consoles: Vec<std::fs::File> = self
+            .consoles
+            .iter()
+            .filter_map(|path| std::fs::OpenOptions::new().write(true).open(path).ok())
+            .collect();
+
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 4096];
+            loop {
+                match pipe.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        for console in &mut consoles {
+                            let _ = console.write_all(&buffer[..n]);
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+        });
     }
 }

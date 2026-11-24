@@ -26,6 +26,33 @@ pub fn device() -> String {
     }
 }
 
+/// Every console the kernel writes to, e.g. `/dev/ttyS0` and `/dev/tty1`
+/// for `console=ttyS0 console=tty1`. Empty if `/sys` can't say.
+pub fn devices() -> Vec<String> {
+    std::fs::read_to_string("/sys/class/tty/console/active")
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(|name| format!("/dev/{name}"))
+        .collect()
+}
+
+/// Write `text` to every console, so what init says is on the screen and
+/// on the serial line alike. Before `/sys` can name them, to stderr.
+pub fn broadcast(text: &str) {
+    use std::io::Write;
+
+    let consoles = devices();
+    if consoles.is_empty() {
+        eprint!("{text}");
+        return;
+    }
+    for path in consoles {
+        if let Ok(mut console) = std::fs::OpenOptions::new().write(true).open(&path) {
+            let _ = console.write_all(text.as_bytes());
+        }
+    }
+}
+
 /// Run in a forked child before `exec`: start a new session and make the
 /// console its controlling terminal, so Ctrl-C reaches the program.
 ///

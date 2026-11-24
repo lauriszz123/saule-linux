@@ -24,6 +24,11 @@
 #               its native ABI matches the saule it runs in and its
 #               Cargo.lock is left alone.
 #
+# An app in APPS= that lives beside this repo rather than in it
+# (`APPS="../saule-settings"`) is mounted read-only at the same place
+# relative to the repo, so the path means the same in the container, and so
+# does any path dependency it has on a sibling (`../saule-wm/api`).
+#
 # What lives where:
 #   the repo (and SAULE_SRC)   bind-mounted from the host: edits are shared
 #   build/                     the volume saule-linux-build — the kernel
@@ -53,6 +58,23 @@ if [ -d "$WM_SRC" ]; then
     wm=(-v "$(cd "$WM_SRC" && pwd):/src/saule-wm:ro")
 fi
 
+# Apps outside the repo, from the APPS= among the arguments.
+apps=()
+for arg in "$@"; do
+    case $arg in
+        APPS=*)
+            for app in ${arg#APPS=}; do
+                case $app in
+                    ../*)
+                        host=$(cd "$repo/$app" && pwd) || exit 1
+                        apps+=(-v "$host:/src/${app#../}:ro")
+                        ;;
+                esac
+            done
+            ;;
+    esac
+done
+
 docker info >/dev/null 2>&1 || {
     echo "docker.sh: no Docker engine running (on a Mac: \`colima start\` or open Docker Desktop)" >&2
     exit 1
@@ -77,6 +99,7 @@ run() {
         -v saule-linux-target:/target \
         ${shine[@]+"${shine[@]}"} \
         ${wm[@]+"${wm[@]}"} \
+        ${apps[@]+"${apps[@]}"} \
         -v saule-linux-cargo:/opt/cargo/registry \
         -e CARGO_TARGET_DIR=/target \
         -e SAULE_HOME=/target/saule-home \
@@ -92,6 +115,18 @@ case $cmd in
         run bash -c '
             set -euo pipefail
             cargo build --release --locked --manifest-path /src/saule/Cargo.toml -p saule-cli
+
+            # `saule build` refuses a package with no receipt in
+            # $SAULE_HOME/installed, and a source package (uikit) has to be
+            # there in full. So install the window manager'"'"'s dependencies
+            # the way `saule install` does, at the versions its saule.lock
+            # pins, from a copy: the checkout is mounted read-only. Shine is
+            # among them, and the build below then replaces its library.
+            if [ -d /src/saule-wm ]; then
+                rm -rf /tmp/wm-deps
+                cp -r /src/saule-wm /tmp/wm-deps
+                (cd /tmp/wm-deps && /target/release/saule install)
+            fi
 
             # Shine, from a copy so the patch below cannot touch its Cargo.lock.
             if [ -d /src/saule-shine ]; then

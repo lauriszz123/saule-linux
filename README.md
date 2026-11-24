@@ -42,11 +42,12 @@ Then:
 |---|---|
 | `make` | download and build the kernel, build init and the session (`../saule-wm`, else `session/`), pack the initramfs |
 | `make run` | boot in QEMU on this terminal (`Ctrl-A X` quits QEMU) |
-| `make run-gui` | boot in a QEMU window: the screen the display server will draw on |
-| `make run-netbook` | boot in QEMU dressed as the HP Mini 210-1001sa (N450, 1 GB, SeaBIOS, 1024×600, USB 2.0, PS/2, a USB tablet as the pointer), with KVM when available: `scripts/qemu-netbook.sh` |
+| `make run-gui` | boot in a QEMU window: the screen the display server will draw on. On a Mac the window captures every shortcut, Cmd+Space included; `QEMU_DISPLAY=…` sets another `-display` |
+| `make run-vnc` | the same, served over VNC on 127.0.0.1:5901 (password `saule`, `VNC_PASSWORD=…` to change it) for a viewer that scales it to its window; on a Mac it opens Screen Sharing, where the launcher is Cmd+D |
+| `make run-netbook` | boot in QEMU dressed as the HP Mini 210-1001sa (N450, 1 GB, SeaBIOS, 1024×600, USB 2.0, PS/2, a USB tablet as the pointer), with KVM when available: `scripts/qemu-netbook.sh`. On a Mac, in QEMU's own window at the netbook's size, one netbook pixel to a point (QEMU runs from a non-Retina copy of itself, `build/qemu-netbook.app`) |
 | `make SLOW=1 run-netbook` | the same at about the netbook's speed: KVM capped at 8% of one core (an estimate; `SLOW=12` sets another percentage). Calibrate with `examples/bench` |
 | `make DEBUG=1 run` | add BusyBox at `/bin`: a shell when the session ends |
-| `make APP=examples/compositor-demo APPS="examples/shine-demo" run-netbook` | a session plus apps, each built into `/bin/apps/<name>` |
+| `make APP=examples/compositor-demo APPS="examples/shine-demo" run-netbook` | a session plus apps, each built into `/bin/apps/<name>`, named after its `saule.config` `name:` |
 | `make TOOLS=0 …` | leave out the command-line tools (BusyBox in `/usr/bin`, there by default for a terminal app's shell) |
 | `make APPEND="saule.on_exit=restart" run` | pass kernel command line options |
 | `make menuconfig` | change kernel options; copy the keepers into `config/kernel.config` |
@@ -70,6 +71,11 @@ gets used.
    - runs `/bin/session` on the console as the **`display`** account (not
      root) with a clean environment (`HOME=/home/display`,
      `XDG_RUNTIME_DIR=/run/user/100`). See [Security](#security);
+   - with more than one console (`console=ttyS0 console=tty1`, as
+     `make run-gui` boots), copies what the session and its apps print to
+     all of them, so a session that covers the screen with its drawing still
+     has its errors on the serial line. Init's own messages go to all of
+     them too;
    - reaps orphaned processes;
    - when the session ends, it follows `saule.on_exit`. A crash restarts the
      session after a second; five quick crashes in a row give up.
@@ -88,6 +94,18 @@ Kernel command line options read by init:
 | `saule.session=PATH` | `/bin/session` | the executable to run as the session |
 | `saule.user=NAME` | `display` | the account it runs as; `root` only when you ask for it |
 | `saule.on_exit=…` | `shell` if `/bin/sh` exists, else `poweroff` | `poweroff`, `reboot`, `restart` or `shell` |
+
+How the session ends is a request init acts on, since the session runs as
+`display` and may not power the machine off itself (the window manager's
+Shut Down, Restart and Log Out use this):
+
+| Exit code | |
+|---|---|
+| 0 | the session ended: `saule.on_exit` decides what next |
+| 80 | power off |
+| 81 | reboot |
+| 82 | log out: start a new session at once |
+| anything else | a crash: restart it after a second (five quick ones in a row give up) |
 
 ## Layout
 

@@ -74,6 +74,14 @@ QEMU_FLAGS ?= -m 2G -smp 2 -no-reboot $(QEMU_ACCEL) \
               -kernel $(BZIMAGE) -initrd $(INITRAMFS)
 APPEND     ?=
 
+# The window `make run-gui` opens. Empty: QEMU's own choice.
+QEMU_DISPLAY ?=
+
+# `make run-vnc`: the screen served over VNC, on this machine only, behind
+# this password (a Mac's Screen Sharing refuses a server without one).
+VNC_PASSWORD ?= saule
+VNC_OPEN     ?=
+
 # On a Mac nothing here can be built natively (it needs a Linux toolchain and
 # an x86_64 Linux saule), so the build targets run in an x86_64 Ubuntu
 # container (scripts/docker.sh, Docker needed) and QEMU runs on the Mac, on
@@ -83,14 +91,21 @@ ifeq ($(HOST_OS),Darwin)
   BZIMAGE   := out/bzImage
   INITRAMFS := out/initramfs.cpio.gz
   QEMU_FLAGS = -m 2G -smp 2 -no-reboot -kernel $(BZIMAGE) -initrd $(INITRAMFS)
+  # Full grab, so that Cmd+Space and the other shortcuts macOS would take
+  # reach the window manager inside. Not zoom-to-fit: QEMU 11's scaled
+  # window keeps rescaling itself, and everything on screen shakes. For a
+  # bigger picture, `make run-vnc` and Screen Sharing.
+  QEMU_DISPLAY = -display cocoa,full-grab=on
+  VNC_OPEN = open vnc://127.0.0.1:5901
 endif
 
-.PHONY: all kernel init session initramfs run run-gui run-netbook menuconfig check-config clean distclean
+.PHONY: all kernel init session initramfs run run-gui run-vnc run-netbook menuconfig check-config clean distclean
 
 ifeq ($(HOST_OS),Darwin)
 
-# APP and APPS must be inside this repo or ../saule-wm: only those, ../saule
-# and ../saule-shine reach the container.
+# APP must be inside this repo or ../saule-wm: only those, ../saule and
+# ../saule-shine reach the container, and the apps in APPS beside the repo
+# (`../saule-settings`), which scripts/docker.sh mounts.
 all kernel init session initramfs menuconfig check-config:
 	scripts/docker.sh make $@ DEBUG=$(DEBUG) TOOLS=$(TOOLS) APP=$(APP) APPS="$(APPS)" KERNEL_VERSION=$(KERNEL_VERSION)
 
@@ -143,14 +158,17 @@ $(GEN_CPIO): $(KSRC)/Makefile
 	$(CC) -O2 -o $@ $(KSRC)/usr/gen_init_cpio.c
 
 # The session as one executable: bytecode, native packages and bundled files
-# packed into a copy of the saule runtime.
+# packed into a copy of the saule runtime. Each app in APPS is built the same
+# way into /bin/apps, named after its project's `name:` (what the launcher
+# lists) rather than its folder: ../saule-settings is "settings".
 session:
 	@test -n "$(SAULE)" || { echo "saule not found: install it or pass SAULE=/path/to/saule"; exit 1; }
 	$(SAULE) build $(APP) -o $(SESSION)
 	rm -rf $(APPS_OUT)
 	mkdir -p $(APPS_OUT)
 	for app in $(APPS); do \
-		$(SAULE) build $$app -o $(APPS_OUT)/$$(basename $$app) || exit 1; \
+		name=$$(sed -n 's/^name: *"\(.*\)".*/\1/p' $$app/saule.config); \
+		$(SAULE) build $$app -o $(APPS_OUT)/$${name:-$$(basename $$app)} || exit 1; \
 	done
 
 initramfs: init session $(GEN_CPIO)
@@ -172,7 +190,19 @@ run: all
 
 # The last console= is the one /dev/console — and so the session — uses.
 run-gui: all
-	$(QEMU) $(QEMU_FLAGS) -vga std -serial stdio -append "console=ttyS0 console=tty1 $(APPEND)"
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_DISPLAY) -vga std -serial stdio -append "console=ttyS0 console=tty1 $(APPEND)"
+
+# The same screen as run-gui, served over VNC on 127.0.0.1:5901 for a viewer
+# that scales it smoothly to its window: on a Mac, Screen Sharing, which this
+# opens once QEMU is listening. The Mac keeps Cmd+Space there, so the
+# launcher is Cmd+D.
+run-vnc: all
+	@echo "VNC on 127.0.0.1:5901, password: $(VNC_PASSWORD)"
+	@$(if $(VNC_OPEN),(sleep 2 && $(VNC_OPEN)) &,)
+	$(QEMU) $(QEMU_FLAGS) -vga std -display none \
+		-object secret,id=vncpass,data=$(VNC_PASSWORD) \
+		-vnc 127.0.0.1:1,password-secret=vncpass \
+		-serial stdio -append "console=ttyS0 console=tty1 $(APPEND)"
 
 # QEMU dressed as the HP Mini 210-1001sa (Atom N450, 1 GB, SeaBIOS, 1024x600
 # VGA, EHCI, PS/2): see scripts/qemu-netbook.sh. Loads the kernel directly
