@@ -30,9 +30,11 @@ QEMU    ?= qemu-system-x86_64
 # in session/ otherwise. APP=… boots any other project.
 WM      ?= ../saule-wm
 APP     ?= $(if $(wildcard $(WM)/saule.config),$(WM),session)
-# Further Saule projects to build into the image as /bin/apps/<name>, for the
-# session to start — the apps under a display server.
-APPS    ?=
+# Saule projects to build into the image as /bin/apps/<name>: the apps the
+# launcher opens. By default every app in ../saule-linux-apps, the ones that
+# ship with the system (one project per folder); APPS="…" for others.
+APPS_REPO ?= ../saule-linux-apps
+APPS    ?= $(patsubst %/saule.config,%,$(wildcard $(APPS_REPO)/*/saule.config))
 
 BUILD     := build
 KSRC      := $(BUILD)/linux-$(KERNEL_VERSION)
@@ -105,7 +107,7 @@ ifeq ($(HOST_OS),Darwin)
 
 # APP must be inside this repo or ../saule-wm: only those, ../saule and
 # ../saule-shine reach the container, and the apps in APPS beside the repo
-# (`../saule-settings`), which scripts/docker.sh mounts.
+# (`../saule-linux-apps/settings`), which scripts/docker.sh mounts.
 all kernel init session initramfs menuconfig check-config:
 	scripts/docker.sh make $@ DEBUG=$(DEBUG) TOOLS=$(TOOLS) APP=$(APP) APPS="$(APPS)" KERNEL_VERSION=$(KERNEL_VERSION)
 
@@ -160,7 +162,8 @@ $(GEN_CPIO): $(KSRC)/Makefile
 # The session as one executable: bytecode, native packages and bundled files
 # packed into a copy of the saule runtime. Each app in APPS is built the same
 # way into /bin/apps, named after its project's `name:` (what the launcher
-# lists) rather than its folder: ../saule-settings is "settings".
+# lists) rather than its folder: an app called "settings" is
+# /bin/apps/settings whatever its folder is called.
 session:
 	@test -n "$(SAULE)" || { echo "saule not found: install it or pass SAULE=/path/to/saule"; exit 1; }
 	$(SAULE) build $(APP) -o $(SESSION)

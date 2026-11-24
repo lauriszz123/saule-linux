@@ -47,7 +47,7 @@ Then:
 | `make run-netbook` | boot in QEMU dressed as the HP Mini 210-1001sa (N450, 1 GB, SeaBIOS, 1024×600, USB 2.0, PS/2, a USB tablet as the pointer), with KVM when available: `scripts/qemu-netbook.sh`. On a Mac, in QEMU's own window at the netbook's size, one netbook pixel to a point (QEMU runs from a non-Retina copy of itself, `build/qemu-netbook.app`) |
 | `make SLOW=1 run-netbook` | the same at about the netbook's speed: KVM capped at 8% of one core (an estimate; `SLOW=12` sets another percentage). Calibrate with `examples/bench` |
 | `make DEBUG=1 run` | add BusyBox at `/bin`: a shell when the session ends |
-| `make APP=examples/compositor-demo APPS="examples/shine-demo" run-netbook` | a session plus apps, each built into `/bin/apps/<name>`, named after its `saule.config` `name:` |
+| `make APP=examples/compositor-demo APPS="examples/shine-demo" run-netbook` | a session plus apps, each built into `/bin/apps/<name>`, named after its `saule.config` `name:`. Without `APPS=`, every app in [`../saule-linux-apps`](https://github.com/lauriszz123/saule-linux-apps), the ones that ship; none starts by itself, the launcher opens them |
 | `make TOOLS=0 …` | leave out the command-line tools (BusyBox in `/usr/bin`, there by default for a terminal app's shell) |
 | `make APPEND="saule.on_exit=restart" run` | pass kernel command line options |
 | `make menuconfig` | change kernel options; copy the keepers into `config/kernel.config` |

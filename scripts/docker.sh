@@ -25,7 +25,7 @@
 #               Cargo.lock is left alone.
 #
 # An app in APPS= that lives beside this repo rather than in it
-# (`APPS="../saule-settings"`) is mounted read-only at the same place
+# (`../saule-linux-apps/settings`) is mounted read-only at the same place
 # relative to the repo, so the path means the same in the container, and so
 # does any path dependency it has on a sibling (`../saule-wm/api`).
 #
