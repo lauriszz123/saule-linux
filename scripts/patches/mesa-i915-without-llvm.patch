@@ -1,0 +1,28 @@
+Build the Gen3 driver (i915) without LLVM.
+
+Mesa asks for LLVM whenever i915 is built: the GMA 900 to 3150 have no
+vertex shader hardware, so vertices are shaded on the CPU by Mesa's draw
+module, which is fastest with LLVM's compiler. LLVM is 100 MB of library,
+on a netbook with 1 GB of memory whose whole system runs from memory, and
+it compiles each shader when it is first used, which on an Atom is a
+visible stall.
+
+The draw module has an interpreter too (draw_vs_exec.c, which softpipe runs
+its vertex shaders through in every pack), and takes the driver's shaders
+through it when LLVM is absent. Nothing in the driver itself uses LLVM. A
+window manager draws a few thousand vertices a frame, which the interpreter
+does in a millisecond or two.
+
+Only the requirement is removed. A pack built with LLVM enabled is as
+upstream has it.
+
+--- a/meson.build	2026-11-25 11:43:15.529287989 +0200
++++ b/meson.build	2026-11-25 11:43:15.531232689 +0200
+@@ -226,7 +226,6 @@
+ endforeach
+ draw_with_llvm = with_llvm.allowed() and get_option('draw-use-llvm')
+ with_llvm = with_llvm \
+-  .enable_if(with_gallium_i915, error_message : 'i915 Gallium driver requires LLVM for vertex shaders') \
+   .enable_if(with_gallium_llvmpipe, error_message : 'LLVMPipe Gallium driver requires LLVM') \
+   .enable_if(with_gallium_r300 and draw_with_llvm, error_message : 'R300 Gallium driver requires LLVM for vertex shaders on IGP parts') \
+   .enable_if(with_gallium_radeonsi and amd_with_llvm, error_message : 'RadeonSI Gallium driver configured to require LLVM')

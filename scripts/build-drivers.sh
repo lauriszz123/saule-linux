@@ -8,7 +8,8 @@
 # machine gets only the driver it needs: the system looks at its graphics
 # chip and installs that pack (see config/drivers.list for which chip is which).
 #
-#   gen3       i915: Intel Gen3, the netbook's GMA 3150 (GLES 2 only)
+#   gen3       i915: Intel Gen3, the netbook's GMA 3150 (GLES 2 only),
+#              without LLVM (scripts/patches/mesa-i915-without-llvm.patch)
 #   intel      crocus, iris: Intel Gen4 to now
 #   amd        r300, r600, radeonsi: ATI/AMD Radeon, radeonsi with ACO
 #              rather than LLVM, which alone would add ~100 MB
@@ -23,6 +24,10 @@
 # paths compiled in are the system's. Versions are pinned, and the tarballs
 # checked against the hashes below.
 #
+# libpciaccess is built here too, not taken from the build host: libdrm's
+# Intel helper, which the Gen3 driver is written on, finds the chip through
+# it, and a pack then carries the library it loads.
+#
 # Needs meson, ninja and Python's mako and yaml on the build host:
 #   apt install meson ninja-build python3-mako python3-yaml
 #
@@ -31,6 +36,8 @@
 
 set -euo pipefail
 
+LIBPCIACCESS_VERSION=0.18.1
+LIBPCIACCESS_SHA256=4af43444b38adb5545d0ed1c2ce46d9608cc47b31c2387fc5181656765a6fa76
 LIBDRM_VERSION=2.4.131
 LIBDRM_SHA256=45ba9983b51c896406a3d654de81d313b953b76e6391e2797073d543c5f617d5
 MESA_VERSION=26.0.8
@@ -52,6 +59,7 @@ for pack in "${wanted[@]}"; do
     [ -n "${PACKS[$pack]:-}" ] || { echo "build-drivers.sh: no pack called $pack" >&2; exit 2; }
 done
 
+patches=$(dirname "$(realpath "$0")")/patches
 out=$(realpath -m "${OUT:-build/drivers}")
 src=$out/src
 libdrm_root=$out/libdrm
@@ -85,28 +93,48 @@ fetch() {
     tar -C "$src" -xf "$file"
 }
 
+fetch "https://www.x.org/releases/individual/lib/libpciaccess-$LIBPCIACCESS_VERSION.tar.xz" "$LIBPCIACCESS_SHA256"
 fetch "https://dri.freedesktop.org/libdrm/libdrm-$LIBDRM_VERSION.tar.xz" "$LIBDRM_SHA256"
 fetch "https://archive.mesa3d.org/mesa-$MESA_VERSION.tar.xz" "$MESA_SHA256"
 
-# libdrm: the kernel's graphics interface, with the helpers the drivers
-# use (Intel's, AMD's, NVIDIA's). Built once; every pack carries a copy.
+# What is changed in Mesa, and why, is at the top of each patch. The source
+# was unpacked afresh just now, so each applies to it as it was released.
+for change in "$patches"/mesa-*.patch; do
+    patch -d "$src/mesa-$MESA_VERSION" -p1 --quiet < "$change"
+done
+
+# What is built is found by the next thing built through copies of its
+# pkg-config files that point into the tree, so it compiles against the
+# tree while the paths it bakes in stay the system's /usr.
+pc=$out/pkgconfig
+rm -rf "$pc" && mkdir -p "$pc"
+publish() {
+    local f
+    for f in "$libdrm_root/usr/$libdir/pkgconfig/"*.pc; do
+        sed "s|^prefix=.*|prefix=$libdrm_root/usr|" "$f" > "$pc/$(basename "$f")"
+    done
+}
+
+# libpciaccess, then libdrm: the kernel's graphics interface, with the
+# helpers the drivers use (Intel's, AMD's, NVIDIA's). Built once, into one
+# tree; every pack carries a copy.
 rm -rf "$libdrm_root"
-meson setup --wipe "$out/libdrm-build" "$src/libdrm-$LIBDRM_VERSION" \
+meson setup --wipe "$out/libpciaccess-build" "$src/libpciaccess-$LIBPCIACCESS_VERSION" \
+    --prefix=/usr --libdir="$libdir" --buildtype=release -Dzlib=disabled
+ninja -C "$out/libpciaccess-build"
+DESTDIR="$libdrm_root" ninja -C "$out/libpciaccess-build" install
+rm -f "$libdrm_root/usr/bin/scanpci"
+publish
+
+PKG_CONFIG_PATH=$pc meson setup --wipe "$out/libdrm-build" "$src/libdrm-$LIBDRM_VERSION" \
     --prefix=/usr --libdir="$libdir" --buildtype=release \
-    -Dintel=auto -Dradeon=enabled -Damdgpu=enabled -Dnouveau=enabled \
+    -Dintel=enabled -Dradeon=enabled -Damdgpu=enabled -Dnouveau=enabled \
     -Dvmwgfx=disabled -Dtests=false -Dman-pages=disabled \
     -Dvalgrind=disabled -Dcairo-tests=disabled
 ninja -C "$out/libdrm-build"
 DESTDIR="$libdrm_root" ninja -C "$out/libdrm-build" install
 
-# Mesa finds that libdrm through copies of its pkg-config files that point
-# into the tree, so it compiles against it while the paths it bakes in stay
-# the system's /usr.
-pc=$out/pkgconfig
-rm -rf "$pc" && mkdir -p "$pc"
-for f in "$libdrm_root/usr/$libdir/pkgconfig/"*.pc; do
-    sed "s|^prefix=.*|prefix=$libdrm_root/usr|" "$f" > "$pc/$(basename "$f")"
-done
+publish
 
 for pack in "${wanted[@]}"; do
     root=$out/$pack
