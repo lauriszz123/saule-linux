@@ -136,8 +136,7 @@ export class Installation
       self.page = Page.Done
       return true
     end
-    return self.shown != before or self.step != step
-      or self.page != Page.Installing
+    return self.shown != before or self.step != step or self.page != Page.Installing
   end
 
   -- Take what `process` has written since last time, a line at a time,

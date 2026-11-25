@@ -7,12 +7,17 @@ from Numbers import Numbers
 -- What a disk holds, as far as it matters to someone about to erase it.
 export enum Contents
   Blank,
+
   -- Saule Linux, installed: its system and its files.
   Saule,
+
   -- Files Saule Linux kept, on a disk it doesn't start from.
   SauleData,
   Windows,
   Linux,
+
+  -- Both, side by side: a computer that starts either.
+  Both,
   Other
 end
 
@@ -74,6 +79,7 @@ export class Disk
       case "saule-data" then Contents.SauleData
       case "windows" then Contents.Windows
       case "linux" then Contents.Linux
+      case "windows-linux" then Contents.Both
       case _ then Contents.Other
     end
   end
@@ -109,6 +115,7 @@ export class Disk
       case Contents.SauleData then "Has files kept by Saule Linux"
       case Contents.Windows then "Windows is on it"
       case Contents.Linux then "Another Linux system is on it"
+      case Contents.Both then "Windows and another Linux system are on it"
       case Contents.Other then "Has something on it"
     end
   end

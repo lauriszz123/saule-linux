@@ -8,8 +8,11 @@
 //! 2. the system's file system, and into it the kernel, the initramfs,
 //!    the one graphics driver pack this machine's chip needs, and GRUB's
 //!    configuration;
-//! 3. the data's file system;
-//! 4. GRUB, which is what makes the BIOS start any of it.
+//! 3. the data's file system, with a note in it when the disk had Windows
+//!    on it: its clock keeps local time;
+//! 4. GRUB, which is what makes the machine start any of it: for UEFI in
+//!    the partition at the end of the disk, copied from the stick's own,
+//!    and for a BIOS in the disk's first sectors, last of all.
 //!
 //! With `--keep-data`, on a disk that has Saule Linux already: the same
 //! without 1 and 3. The system is written again and what was kept stays.
@@ -126,9 +129,13 @@ pub fn install(request: &Request) -> io::Result<()> {
     if let Some(data_device) = data_device {
         say("step data");
         sys::format(&data_device, None, DATA_LABEL, Format::Data)?;
+        if matches!(disk.contents, Contents::Windows | Contents::WindowsAndLinux) {
+            note_local_clock(&data_device)?;
+        }
     }
 
     say("step boot");
+    copy_efi(&mut whole, &disk, &layout, request)?;
     if request.keep_data {
         grub.write_keeping_table(&mut whole)?;
     } else {
@@ -209,6 +216,53 @@ pub fn live_drivers() -> io::Result<()> {
 /// The image's command-line tools.
 const BUSYBOX: &str = "/usr/bin/busybox";
 
+/// GRUB for UEFI, from the stick's partition for it into the disk's.
+///
+/// Keeping the data keeps the disk's partitions, so a disk installed
+/// before there was such a partition has none to fill, and goes on
+/// starting from a BIOS only. Installing from a folder rather than a stick
+/// takes `efi.img` beside the folder, when there is one.
+fn copy_efi(whole: &mut File, disk: &Disk, layout: &Layout, request: &Request) -> io::Result<()> {
+    let into = if request.keep_data {
+        match efi_partition(&disk.device) {
+            Some(partition) => partition,
+            None => return Ok(()),
+        }
+    } else {
+        layout.efi
+    };
+
+    if let Some(folder) = request.from {
+        let image = folder.with_file_name("efi.img");
+        if !image.is_file() {
+            return Ok(());
+        }
+        return grub::write_efi(whole, into, &mut File::open(image)?);
+    }
+
+    for stick in disks::all() {
+        if stick.contents != Contents::Medium {
+            continue;
+        }
+        if let Some(from) = efi_partition(&stick.device) {
+            let mut source = File::open(&stick.device)?;
+            source.seek(SeekFrom::Start(from.offset()))?;
+            return grub::write_efi(whole, into, &mut source.take(from.bytes()));
+        }
+    }
+    refuse("The USB stick has no GRUB for UEFI on it.")
+}
+
+/// The EFI system partition of the disk at `device`, as its MBR lists it.
+fn efi_partition(device: &Path) -> Option<layout::Partition> {
+    let mut sector = [0u8; 512];
+    File::open(device).ok()?.read_exact(&mut sector).ok()?;
+    layout::partitions_in(&sector)
+        .into_iter()
+        .find(|(kind, _)| *kind == layout::EFI_SYSTEM)
+        .map(|(_, partition)| partition)
+}
+
 fn partition_device(disk: &Disk, number: u32) -> PathBuf {
     Path::new("/dev").join(layout::partition_name(&disk.name, number))
 }
@@ -223,6 +277,19 @@ fn kept_system(disk: &Disk) -> io::Result<PathBuf> {
         Some((number, _)) => Ok(partition_device(disk, number)),
         None => refuse("The disk has no system partition to install into."),
     }
+}
+
+/// Windows sets a PC's own clock to local time, where Linux expects UTC.
+/// A machine that had Windows on it is taken to have its clock that way
+/// still: said in a file on the new data disk, which init reads once the
+/// person has chosen a time zone (`clock` in ../init/src/system.rs), so
+/// the time comes out right without anyone having to set it.
+fn note_local_clock(data_device: &Path) -> io::Result<()> {
+    let data = Mounted::new(data_device, Path::new(TARGET_AT), false)?;
+    let folder = data.path().join("system");
+    fs::create_dir_all(&folder)?;
+    fs::write(folder.join("clock"), "local\n")?;
+    data.unmount()
 }
 
 /// A new partition table on `whole`, and zeros over the rest of the first
@@ -390,7 +457,7 @@ mod tests {
         // Not the stick's, which starts the installer.
         assert_eq!(
             fs::read_to_string(target.join("grub/grub.cfg")).unwrap(),
-            "set timeout=0\nlinux /vmlinuz quiet console=tty1\ninitrd /initramfs.cpio.gz\nboot\n"
+            "set timeout=0\nset gfxpayload=auto\nlinux /vmlinuz quiet console=tty1\ninitrd /initramfs.cpio.gz\nboot\n"
         );
 
         fs::remove_dir_all(medium).unwrap();

@@ -22,11 +22,29 @@ export class Sky extends View
     local middle = Look.skyMiddle
     local bottom = Look.skyBottom
 
-    Graphics.setLinearGradient(x, y, x + w, y + h, {
-      0.0, top.r, top.g, top.b, 1.0,
-      0.5, middle.r, middle.g, middle.b, 1.0,
-      1.0, bottom.r, bottom.g, bottom.b, 1.0,
-    })
+    Graphics.setLinearGradient(
+      x,
+      y,
+      x + w,
+      y + h,
+      {
+        0.0,
+        top.r,
+        top.g,
+        top.b,
+        1.0,
+        0.5,
+        middle.r,
+        middle.g,
+        middle.b,
+        1.0,
+        1.0,
+        bottom.r,
+        bottom.g,
+        bottom.b,
+        1.0,
+      }
+    )
     Graphics.rectangle("fill", x, y, w, h)
     Graphics.clearGradient()
   end

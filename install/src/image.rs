@@ -1,6 +1,6 @@
 //! A USB stick's image, made on the build machine.
 //!
-//! `saule-install image OUT ROOT` turns a folder — the kernel, the
+//! `saule-install image OUT ROOT --efi IMAGE` turns a folder — the kernel, the
 //! initramfs, the driver packs, GRUB and its configuration, laid out as
 //! they are on the stick — into a file that is the stick, byte for byte:
 //! written to one with `dd` (or Rufus, in its DD mode), the netbook's BIOS
@@ -11,13 +11,13 @@ use std::fs::{self, File};
 use std::io;
 use std::path::Path;
 
-use crate::grub::Grub;
-use crate::layout::{Layout, MEDIUM_LABEL, SECTOR};
+use crate::grub::{self, Grub};
+use crate::layout::{Layout, EFI_SECTORS, MEDIUM_LABEL, SECTOR};
 use crate::sys::{self, Format};
 
 /// Make `out` from the folder `root`. `megabytes` is the image's size;
 /// without it, what the files need and a little room.
-pub fn make(out: &Path, root: &Path, megabytes: Option<u64>) -> io::Result<u64> {
+pub fn make(out: &Path, root: &Path, efi: &Path, megabytes: Option<u64>) -> io::Result<u64> {
     let grub = Grub::read(&root.join("grub"))?;
     for needed in ["vmlinuz", "initramfs.cpio.gz", "grub/grub.cfg"] {
         if !root.join(needed).is_file() {
@@ -47,6 +47,9 @@ pub fn make(out: &Path, root: &Path, megabytes: Option<u64>) -> io::Result<u64> 
         MEDIUM_LABEL,
         Format::System { from: Some(root) },
     )?;
+    // The file system GRUB for UEFI is in (`scripts/mkgrub.sh` makes it),
+    // whole, into the partition a PC without a BIOS starts from.
+    grub::write_efi(&mut file, layout.efi, &mut File::open(efi)?)?;
     grub.write(&mut file, &layout.table())?;
     Ok(bytes)
 }
@@ -56,7 +59,8 @@ pub fn make(out: &Path, root: &Path, megabytes: Option<u64>) -> io::Result<u64> 
 /// more and four megabytes covers them), rounded up to eight.
 fn megabytes_for(bytes: u64) -> u64 {
     let megabytes = bytes.div_ceil(1 << 20);
-    let needed = 1 + megabytes + megabytes / 10 + 4;
+    // … and the partition for UEFI after it.
+    let needed = 1 + megabytes + megabytes / 10 + 4 + u64::from(EFI_SECTORS) / 2048;
     needed.div_ceil(8) * 8
 }
 
@@ -81,8 +85,8 @@ mod tests {
 
     #[test]
     fn an_image_has_room_for_its_files_and_the_tables() {
-        assert_eq!(megabytes_for(0), 8);
-        assert_eq!(megabytes_for(40 << 20), 56);
-        assert_eq!(megabytes_for((100 << 20) + 1), 120);
+        assert_eq!(megabytes_for(0), 40);
+        assert_eq!(megabytes_for(40 << 20), 88);
+        assert_eq!(megabytes_for((100 << 20) + 1), 152);
     }
 }

@@ -17,7 +17,12 @@
 //! and root; this needs a file it can write, so the same code puts GRUB on
 //! the netbook's disk and on a stick's image on the build machine.
 //!
-//! `core.img` reads `/grub/grub.cfg` on the first partition of the disk it
+//! A PC with UEFI and no BIOS ignores all of that and starts
+//! `EFI/BOOT/BOOTX64.EFI` from a FAT partition marked as its own. That file
+//! is GRUB again, built for UEFI; `mkgrub.sh` makes the whole file system
+//! with it inside, and [`write_efi`] copies it into the partition.
+//!
+//! Either GRUB reads `/grub/grub.cfg` on the first partition of the disk it
 //! was started from, whichever disk that is ([`config`]).
 
 use std::fs::File;
@@ -123,12 +128,30 @@ impl Grub {
     }
 }
 
+/// Copy the EFI system partition's file system from `source` (the image
+/// `mkgrub.sh` made, or the stick's own partition) to `partition` of
+/// `disk`. `source` may be the longer; the partition's length is copied.
+pub fn write_efi(
+    disk: &mut File,
+    partition: crate::layout::Partition,
+    source: &mut impl Read,
+) -> io::Result<()> {
+    disk.seek(SeekFrom::Start(partition.offset()))?;
+    let copied = io::copy(&mut source.take(partition.bytes()), disk)?;
+    if copied < 1 << 20 {
+        return Err(io::Error::other("GRUB for UEFI is missing or cut short"));
+    }
+    disk.sync_all()
+}
+
 /// What GRUB is told to boot: the kernel with `options`, and the
 /// initramfs followed by `overlays` — more archives the kernel unpacks
 /// over it, which is how a machine gets the one graphics driver pack it
 /// needs. Paths are on the partition GRUB was started from.
 ///
-/// No menu and no wait: there is one thing to boot.
+/// No menu and no wait: there is one thing to boot. `gfxpayload` has GRUB
+/// leave the screen in a graphics mode, which is all a kernel with no
+/// driver for the machine's graphics chip has to draw on.
 pub fn config(options: &str, overlays: &[String]) -> String {
     let mut initrd = String::from("/initramfs.cpio.gz");
     for overlay in overlays {
@@ -137,7 +160,9 @@ pub fn config(options: &str, overlays: &[String]) -> String {
     }
     let options = options.trim();
     let space = if options.is_empty() { "" } else { " " };
-    format!("set timeout=0\nlinux /vmlinuz{space}{options}\ninitrd {initrd}\nboot\n")
+    format!(
+        "set timeout=0\nset gfxpayload=auto\nlinux /vmlinuz{space}{options}\ninitrd {initrd}\nboot\n"
+    )
 }
 
 #[cfg(test)]
@@ -163,7 +188,7 @@ mod tests {
         assert_eq!(sector[0], 0xEB);
         assert_eq!(sector[0x68], 0xEB);
         // and the table is the layout's.
-        assert_eq!(crate::layout::partitions_in(&sector).len(), 2);
+        assert_eq!(crate::layout::partitions_in(&sector).len(), 3);
         assert_eq!(&sector[510..], &[0x55, 0xAA]);
     }
 
@@ -197,7 +222,7 @@ mod tests {
             .unwrap();
         file.set_len(4 << 20).unwrap();
 
-        let layout = Layout::stick(8192).unwrap();
+        let layout = Layout::stick(80 * 2048).unwrap();
         grub(1000).write(&mut file, &layout.table()).unwrap();
 
         let bytes = std::fs::read(&path).unwrap();
@@ -231,19 +256,47 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let mut sector = [0u8; 512];
         sector.copy_from_slice(&bytes[..512]);
-        assert_eq!(crate::layout::partitions_in(&sector).len(), 2);
+        assert_eq!(crate::layout::partitions_in(&sector).len(), 3);
         assert_eq!(sector[0], 0xEB);
+    }
+
+    #[test]
+    fn grub_for_uefi_is_copied_into_its_partition() {
+        let path = std::env::temp_dir().join(format!("saule-install-efi-{}", std::process::id()));
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
+        file.set_len(80 << 20).unwrap();
+        let layout = Layout::stick(80 * 2048).unwrap();
+
+        // Longer than the partition: only the partition's length is taken.
+        let source = vec![0xEFu8; 35 << 20];
+        write_efi(&mut file, layout.efi, &mut source.as_slice()).unwrap();
+        // Too short to be GRUB: refused.
+        assert!(write_efi(&mut file, layout.efi, &mut &source[..1000]).is_err());
+
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let start = layout.efi.offset() as usize;
+        assert_eq!(bytes[start - 1], 0);
+        assert_eq!(bytes[start + 2000], 0xEF);
+        assert_eq!(bytes.len(), 80 << 20);
+        assert_eq!(bytes[bytes.len() - 1], 0xEF);
     }
 
     #[test]
     fn the_configuration_boots_one_thing_at_once() {
         assert_eq!(
             config("quiet", &[]),
-            "set timeout=0\nlinux /vmlinuz quiet\ninitrd /initramfs.cpio.gz\nboot\n"
+            "set timeout=0\nset gfxpayload=auto\nlinux /vmlinuz quiet\ninitrd /initramfs.cpio.gz\nboot\n"
         );
         assert_eq!(
             config("", &["/drivers/gen3.cpio.gz".into()]),
-            "set timeout=0\nlinux /vmlinuz\ninitrd /initramfs.cpio.gz /drivers/gen3.cpio.gz\nboot\n"
+            "set timeout=0\nset gfxpayload=auto\nlinux /vmlinuz\ninitrd /initramfs.cpio.gz /drivers/gen3.cpio.gz\nboot\n"
         );
     }
 }

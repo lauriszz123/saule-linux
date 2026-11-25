@@ -13,9 +13,9 @@
 //!       erase DISK (`sda`) and install onto it; see `target.rs` for what
 //!       it prints. Needs root.
 //!
-//!   saule-install image OUT ROOT [--megabytes N]
-//!       make the image OUT of a stick holding the folder ROOT. Needs
-//!       only `mke2fs`.
+//!   saule-install image OUT ROOT --efi IMAGE [--megabytes N]
+//!       make the image OUT of a stick holding the folder ROOT, with the
+//!       file system IMAGE as its partition for UEFI. Needs only `mke2fs`.
 //!
 //!   saule-install live-drivers
 //!       unpack the graphics driver pack this machine's chip needs over
@@ -74,7 +74,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!("usage: saule-install disks");
             eprintln!("       saule-install install DISK [--keep-data] [--from FOLDER]");
-            eprintln!("       saule-install image OUT ROOT [--megabytes N]");
+            eprintln!("       saule-install image OUT ROOT --efi IMAGE [--megabytes N]");
             eprintln!("       saule-install live-drivers");
             eprintln!("       saule-install config OPTIONS [OVERLAY...]");
             eprintln!("       saule-install driver < drivers.list");
@@ -112,16 +112,30 @@ fn install(disk: &str, options: &[&str]) -> std::io::Result<()> {
 }
 
 fn image(out: &str, root: &str, options: &[&str]) -> std::io::Result<()> {
-    let megabytes = match options {
-        [] => None,
-        ["--megabytes", count] => Some(
-            count
-                .parse()
-                .map_err(|_| std::io::Error::other("--megabytes needs a number"))?,
-        ),
-        _ => return Err(std::io::Error::other("unknown option")),
+    let mut megabytes = None;
+    let mut efi = None;
+    let mut rest = options.iter();
+    while let Some(option) = rest.next() {
+        match (*option, rest.next()) {
+            ("--megabytes", Some(count)) => {
+                megabytes = Some(
+                    count
+                        .parse()
+                        .map_err(|_| std::io::Error::other("--megabytes needs a number"))?,
+                );
+            }
+            ("--efi", Some(file)) => efi = Some(Path::new(file)),
+            (other, _) => {
+                return Err(std::io::Error::other(format!(
+                    "unknown option {other}, or nothing after it"
+                )));
+            }
+        }
+    }
+    let Some(efi) = efi else {
+        return Err(std::io::Error::other("--efi IMAGE is needed"));
     };
-    let bytes = image::make(Path::new(out), Path::new(root), megabytes)?;
+    let bytes = image::make(Path::new(out), Path::new(root), efi, megabytes)?;
     println!("image: {out} ({} MB)", bytes >> 20);
     Ok(())
 }

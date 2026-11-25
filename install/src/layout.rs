@@ -1,7 +1,9 @@
 //! Where things are on a disk Saule Linux boots from.
 //!
 //! The netbook has a BIOS and no EFI, so the disk has an MBR: the first
-//! sector holds the boot code and a table of four partitions.
+//! sector holds the boot code and a table of four partitions. A PC with
+//! UEFI reads the same table, and starts from the partition marked as its
+//! own, so one disk starts either kind of machine.
 //!
 //! ```text
 //!   sector 0          MBR: GRUB's first stage, and the partition table
@@ -10,12 +12,14 @@
 //!   partition 1       the system: the kernel, the initramfs it runs from,
 //!                     a driver pack, and GRUB's configuration (ext2)
 //!   partition 2       what the session keeps: `/data` (ext4, journaled)
+//!   partition 3       GRUB for UEFI, at the end of the disk (FAT32, the
+//!                     "EFI system partition")
 //! ```
 //!
 //! The system has a partition of its own so that it is never mounted while
 //! the machine runs: nothing a program does, and no power cut, can leave a
-//! machine that does not boot. A USB stick has the first three and no
-//! data partition.
+//! machine that does not boot. A USB stick has no data partition: the
+//! system, then GRUB for UEFI.
 
 /// Bytes in a sector, as an MBR and the BIOS count them.
 pub const SECTOR: u64 = 512;
@@ -26,6 +30,11 @@ pub const FIRST_PARTITION: u32 = 2048;
 /// The system partition on a hard disk: room for the kernel and initramfs
 /// several times over, so that a later, larger system still fits.
 pub const SYSTEM_SECTORS: u32 = 512 * 2048;
+
+/// The partition UEFI firmware starts from: as small as FAT32 comes, which
+/// is what the firmware is promised. `scripts/mkgrub.sh` makes the file
+/// system that fills it, and has the same number.
+pub const EFI_SECTORS: u32 = 34 * 2048;
 
 /// What an ext file system holding the system is called on a hard disk,
 pub const SYSTEM_LABEL: &str = "SAULE-BOOT";
@@ -57,11 +66,18 @@ pub struct Layout {
     pub system: Partition,
     /// None on a stick: it carries the system and keeps nothing.
     pub data: Option<Partition>,
+    /// GRUB for UEFI: the last megabytes of the disk.
+    pub efi: Partition,
 }
 
 /// The smallest disk the system and a little data fit on, in sectors:
-/// the system partition and as much again.
-pub const SMALLEST_DISK: u64 = FIRST_PARTITION as u64 + 2 * SYSTEM_SECTORS as u64;
+/// the system partition and as much again, and the one for UEFI.
+pub const SMALLEST_DISK: u64 =
+    FIRST_PARTITION as u64 + 2 * SYSTEM_SECTORS as u64 + EFI_SECTORS as u64;
+
+/// What an MBR calls a Linux partition, and an EFI system partition.
+const LINUX: u8 = 0x83;
+pub const EFI_SYSTEM: u8 = 0xEF;
 
 impl Layout {
     /// A hard disk: the system, then data to the end. An MBR counts
@@ -72,6 +88,7 @@ impl Layout {
         }
         let end = sectors.min(u64::from(u32::MAX)) as u32;
         let data_start = FIRST_PARTITION + SYSTEM_SECTORS;
+        let efi_start = end - EFI_SECTORS;
         Some(Layout {
             system: Partition {
                 start: FIRST_PARTITION,
@@ -79,24 +96,33 @@ impl Layout {
             },
             data: Some(Partition {
                 start: data_start,
-                sectors: end - data_start,
+                sectors: efi_start - data_start,
             }),
+            efi: Partition {
+                start: efi_start,
+                sectors: EFI_SECTORS,
+            },
         })
     }
 
-    /// A stick, or its image: one partition from the first megabyte to
-    /// the end.
+    /// A stick, or its image: the system from the first megabyte on, then
+    /// GRUB for UEFI at the end.
     pub fn stick(sectors: u64) -> Option<Layout> {
         let end = sectors.min(u64::from(u32::MAX)) as u32;
-        if end <= FIRST_PARTITION {
+        if end <= FIRST_PARTITION + EFI_SECTORS {
             return None;
         }
+        let efi_start = end - EFI_SECTORS;
         Some(Layout {
             system: Partition {
                 start: FIRST_PARTITION,
-                sectors: end - FIRST_PARTITION,
+                sectors: efi_start - FIRST_PARTITION,
             },
             data: None,
+            efi: Partition {
+                start: efi_start,
+                sectors: EFI_SECTORS,
+            },
         })
     }
 
@@ -109,10 +135,15 @@ impl Layout {
         table[0..4].copy_from_slice(b"SAUL");
 
         // The system partition is the active one: some BIOSes of the
-        // netbook's years refuse to boot a disk that has none.
-        table[6..22].copy_from_slice(&entry(self.system, true));
+        // netbook's years refuse to boot a disk that has none. It is
+        // always the first: GRUB looks for its files on partition 1.
+        let mut entries = vec![entry(self.system, LINUX, true)];
         if let Some(data) = self.data {
-            table[22..38].copy_from_slice(&entry(data, false));
+            entries.push(entry(data, LINUX, false));
+        }
+        entries.push(entry(self.efi, EFI_SYSTEM, false));
+        for (i, bytes) in entries.iter().enumerate() {
+            table[6 + i * 16..22 + i * 16].copy_from_slice(bytes);
         }
 
         table[70] = 0x55;
@@ -124,7 +155,7 @@ impl Layout {
 /// Where the table starts in the first sector.
 pub const TABLE_AT: usize = 440;
 
-fn entry(partition: Partition, active: bool) -> [u8; 16] {
+fn entry(partition: Partition, kind: u8, active: bool) -> [u8; 16] {
     // Past what cylinders, heads and sectors can say: every tool then
     // goes by the sector numbers after them.
     const CHS_LIMIT: [u8; 3] = [0xFE, 0xFF, 0xFF];
@@ -132,7 +163,7 @@ fn entry(partition: Partition, active: bool) -> [u8; 16] {
     let mut entry = [0u8; 16];
     entry[0] = if active { 0x80 } else { 0x00 };
     entry[1..4].copy_from_slice(&CHS_LIMIT);
-    entry[4] = 0x83; // Linux
+    entry[4] = kind;
     entry[5..8].copy_from_slice(&CHS_LIMIT);
     entry[8..12].copy_from_slice(&partition.start.to_le_bytes());
     entry[12..16].copy_from_slice(&partition.sectors.to_le_bytes());
@@ -180,7 +211,13 @@ mod tests {
         assert_eq!(layout.system.bytes(), 512 << 20);
         let data = layout.data.unwrap();
         assert_eq!(data.start, layout.system.start + layout.system.sectors);
-        assert_eq!(u64::from(data.start) + u64::from(data.sectors), NETBOOK);
+        // then GRUB for UEFI, which ends where the disk does.
+        assert_eq!(data.start + data.sectors, layout.efi.start);
+        assert_eq!(layout.efi.bytes(), 34 << 20);
+        assert_eq!(
+            u64::from(layout.efi.start) + u64::from(layout.efi.sectors),
+            NETBOOK
+        );
     }
 
     #[test]
@@ -192,20 +229,22 @@ mod tests {
     #[test]
     fn a_disk_past_two_tebibytes_stops_where_the_table_can_count() {
         let layout = Layout::disk(8 << 32).unwrap();
-        let data = layout.data.unwrap();
+        let efi = layout.efi;
         assert_eq!(
-            u64::from(data.start) + u64::from(data.sectors),
+            u64::from(efi.start) + u64::from(efi.sectors),
             u64::from(u32::MAX)
         );
     }
 
     #[test]
-    fn a_stick_is_one_partition() {
+    fn a_stick_is_the_system_and_grub_for_uefi() {
         let layout = Layout::stick(256 * 2048).unwrap();
         assert_eq!(layout.system.start, 2048);
-        assert_eq!(layout.system.sectors, 255 * 2048);
+        assert_eq!(layout.system.sectors, (255 - 34) * 2048);
+        assert_eq!(layout.efi.start, (256 - 34) * 2048);
         assert!(layout.data.is_none());
-        assert!(Layout::stick(2048).is_none());
+        assert!(Layout::stick(35 * 2048).is_none());
+        assert!(Layout::stick(36 * 2048).is_some());
     }
 
     #[test]
@@ -215,9 +254,10 @@ mod tests {
         sector[TABLE_AT..].copy_from_slice(&layout.table());
 
         let found = partitions_in(&sector);
-        assert_eq!(found.len(), 2);
+        assert_eq!(found.len(), 3);
         assert_eq!(found[0], (0x83, layout.system));
         assert_eq!(found[1], (0x83, layout.data.unwrap()));
+        assert_eq!(found[2], (0xEF, layout.efi));
         // The system partition is the active one, and only it.
         assert_eq!(sector[446], 0x80);
         assert_eq!(sector[462], 0x00);

@@ -50,7 +50,9 @@ export class Step extends View
     if self.grave then
       ink = Look.warning
     end
-    local title = Text(self.title).font(Look.titleSize).foregroundStyle(Look.text)
+    local title = Text(self.title).font(Look.titleSize).foregroundStyle(
+      Look.text
+    )
     local said = Text(self.said).font(Look.bodySize).foregroundStyle(ink)
     local centred = said.lineLimit(4).multilineTextAlignment(TextAlign.Center)
 

@@ -25,17 +25,49 @@ export class DiskGlyph extends View
     if self.usb then
       -- The plug, then the body it sticks out of.
       Graphics.setColor(0.72, 0.74, 0.78)
-      Graphics.rectangle("fill", left + s * 0.36, top + s * 0.06, s * 0.28, s * 0.24, 2.0, 2.0)
+      Graphics.rectangle(
+        "fill",
+        left + s * 0.36,
+        top + s * 0.06,
+        s * 0.28,
+        s * 0.24,
+        2.0,
+        2.0
+      )
       Graphics.setColor(0.86, 0.87, 0.90)
-      Graphics.rectangle("fill", left + s * 0.26, top + s * 0.28, s * 0.48, s * 0.66, 5.0, 5.0)
+      Graphics.rectangle(
+        "fill",
+        left + s * 0.26,
+        top + s * 0.28,
+        s * 0.48,
+        s * 0.66,
+        5.0,
+        5.0
+      )
       return
     end
 
     -- The slab, a darker band along its foot, and the light on the band.
     Graphics.setColor(0.86, 0.87, 0.90)
-    Graphics.rectangle("fill", left + s * 0.08, top + s * 0.20, s * 0.84, s * 0.60, 5.0, 5.0)
+    Graphics.rectangle(
+      "fill",
+      left + s * 0.08,
+      top + s * 0.20,
+      s * 0.84,
+      s * 0.60,
+      5.0,
+      5.0
+    )
     Graphics.setColor(0.60, 0.62, 0.67)
-    Graphics.rectangle("fill", left + s * 0.08, top + s * 0.60, s * 0.84, s * 0.20, 5.0, 5.0)
+    Graphics.rectangle(
+      "fill",
+      left + s * 0.08,
+      top + s * 0.60,
+      s * 0.84,
+      s * 0.20,
+      5.0,
+      5.0
+    )
     Graphics.setColor(0.36, 0.86, 0.52)
     Graphics.circle("fill", left + s * 0.78, top + s * 0.70, s * 0.045)
   end

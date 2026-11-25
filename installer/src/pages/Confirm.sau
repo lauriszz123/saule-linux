@@ -75,6 +75,8 @@ export class Confirm extends View
         named .. " has Windows on it. Windows and every file on the disk will be gone." .. last
       case Contents.Linux then
         named .. " has another Linux system on it. That system and its files will be gone." .. last
+      case Contents.Both then
+        named .. " has Windows and another Linux system on it. Both, and every file on the disk, will be gone." .. last
       case Contents.SauleData then
         named .. " has files kept by Saule Linux. They will be gone." .. last
       case _ then

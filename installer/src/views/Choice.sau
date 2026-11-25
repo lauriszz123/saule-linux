@@ -6,7 +6,10 @@ from uikit import *
 from theme import Look
 
 export class Choice
-  static padding: EdgeInsets = EdgeInsets.symmetric(horizontal: 18.0, vertical: 8.0)
+  static padding: EdgeInsets = EdgeInsets.symmetric(
+    horizontal: 18.0,
+    vertical: 8.0
+  )
 
   -- The way forward: in the accent, and where the keyboard starts.
   static fn main(label: string, onPressed: Action, enabled: boolean = true) -> View
