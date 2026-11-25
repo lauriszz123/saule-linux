@@ -15,6 +15,11 @@
 //!   power       how each thing stands, a file each, rewritten as it
 //!   sound       changes: a few `name value` lines, read by whoever wants
 //!   network     them
+//!   display
+//!   login
+//!   disks
+//!   clock
+//!   bluetooth
 //!
 //! Files rather than a socket because a Saule program can read and write
 //! them with nothing but `Io`, and because how things stand is then there
@@ -25,6 +30,17 @@
 //!   sleep                    suspend to memory (`power.rs`)
 //!   volume 0..100            the sound card's volume (`sound.rs`)
 //!   mute 0|1
+//!   input 0..100             the microphone's level; `input-mute 0|1`
+//!   output N                 play through sound card N
+//!   brightness 0..100        the screen's backlight (`backlight.rs`)
+//!   eject DEVICE             let go of a drive that is plugged in
+//!                            (`disks.rs`)
+//!   clock sync               ask a time server the time now (`clock.rs`)
+//!   bluetooth on|off|scan    the radio, and looking for devices
+//!   bluetooth pair|connect|disconnect|forget ADDRESS   (`bluetooth.rs`)
+//!   unlock PASSWORD          is this the person's password? (`login.rs`)
+//!   password OLD<tab>NEW     change it
+//!   person NAME              who the machine is for
 //!   wifi on|off              the radio (`wifi.rs`)
 //!   wifi scan                look for networks again
 //!   wifi join SSID[<tab>PASSWORD]
@@ -33,7 +49,12 @@
 //! Usage: saule-system [ACCOUNT]    the session's account (default: display)
 
 mod account;
+mod backlight;
+mod bluetooth;
+mod clock;
+mod disks;
 mod files;
+mod login;
 mod network;
 mod power;
 mod requests;
@@ -53,6 +74,11 @@ fn main() {
     }
 
     let sound = sound::start();
+    let backlight = backlight::start();
+    let disks = disks::start(owner);
+    let clock = clock::start();
+    let bluetooth = bluetooth::start();
+    let mut login = login::start();
     let wifi = wifi::start();
     network::start(wifi.clone());
     power::watch_lid();
@@ -61,7 +87,12 @@ fn main() {
         let (word, rest) = request.split_once(' ').unwrap_or((request, ""));
         match word {
             "sleep" => power::sleep(),
-            "volume" | "mute" => sound.ask(word, rest),
+            "volume" | "mute" | "input" | "input-mute" | "output" => sound.ask(word, rest),
+            "brightness" => backlight.ask(rest),
+            "eject" => disks.ask(word, rest),
+            "clock" => clock.ask(rest),
+            "bluetooth" => bluetooth.ask(rest),
+            "unlock" | "password" | "person" => login.ask(word, rest),
             "wifi" => wifi.ask(rest),
             _ => eprintln!("saule-system: unknown request `{word}`"),
         }

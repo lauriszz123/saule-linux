@@ -36,6 +36,14 @@ const FIRST_VOLUME: u8 = 60;
 /// without one.
 const VOLUMES: [&str; 5] = ["Master", "PCM", "Speaker", "Headphone", "Line Out"];
 
+/// A microphone's dial, in the order looked for: the card's one dial for
+/// what it records, then the microphone's own.
+const INPUTS: [&str; 4] = ["Capture", "Mic", "Internal Mic", "Digital"];
+
+/// Where the sound library is told which card plays: programs started
+/// after an output is chosen play through it.
+const LIBRARY: &str = "/etc/asound.conf";
+
 /// What plays behind the volume: turned all the way up and on, so that
 /// the one dial is what decides.
 const BEHIND: [&str; 6] = [
@@ -105,8 +113,10 @@ const ELEM_INFO: libc::Ioctl = iowr(0x11, std::mem::size_of::<ElemInfo>());
 const ELEM_READ: libc::Ioctl = iowr(0x12, std::mem::size_of::<ElemValue>());
 const ELEM_WRITE: libc::Ioctl = iowr(0x13, std::mem::size_of::<ElemValue>());
 
-/// The kind of control a mixer's dials and switches are.
+/// The kind of control a mixer's dials and switches are, and the kind
+/// that says what is plugged into the card's sockets.
 const IFACE_MIXER: i32 = 2;
+const IFACE_CARD: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // A card's mixer
@@ -122,10 +132,17 @@ struct Elem {
 }
 
 struct Mixer {
+    /// Which of the machine's cards: the N of `/dev/snd/controlCN`.
+    index: u32,
     card: File,
     volume: Elem,
     /// The switch that goes with the volume, where the card has one.
     switch: Option<Elem>,
+    /// The microphone's dial and switch, where the card records.
+    capture: Option<Elem>,
+    capture_switch: Option<Elem>,
+    /// What says whether headphones are in their socket.
+    jack: Option<Elem>,
 }
 
 fn name_of(id: &ElemId) -> String {
@@ -138,19 +155,24 @@ fn name_of(id: &ElemId) -> String {
 }
 
 impl Mixer {
-    /// The first card with a volume.
-    fn open() -> Option<Mixer> {
-        (0..8).find_map(|card| {
-            let file = File::options()
-                .read(true)
-                .write(true)
-                .open(format!("/dev/snd/controlC{card}"))
-                .ok()?;
-            Mixer::on(file)
-        })
+    /// The card chosen, if it is there and has a volume; else the first
+    /// card that has.
+    fn open(chosen: Option<u32>) -> Option<Mixer> {
+        chosen
+            .and_then(Mixer::of)
+            .or_else(|| (0..8).find_map(Mixer::of))
     }
 
-    fn on(card: File) -> Option<Mixer> {
+    fn of(index: u32) -> Option<Mixer> {
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .open(format!("/dev/snd/controlC{index}"))
+            .ok()?;
+        Mixer::on(file, index)
+    }
+
+    fn on(card: File, index: u32) -> Option<Mixer> {
         let elems = elems(&card);
         let find = |name: String| {
             elems
@@ -178,11 +200,64 @@ impl Mixer {
             }
         }
 
+        let (capture, capture_switch) = INPUTS
+            .iter()
+            .find_map(|dial| {
+                let volume = find(format!("{dial} Capture Volume"))
+                    .or_else(|| find(format!("{dial} Volume")).filter(|_| *dial == "Capture"))?;
+                let switch = find(format!("{dial} Capture Switch"))
+                    .or_else(|| find(format!("{dial} Switch")).filter(|_| *dial == "Capture"));
+                Some((Some(volume), switch))
+            })
+            .unwrap_or((None, None));
+        let jack = elems
+            .iter()
+            .find(|id| {
+                let name = name_of(id);
+                id.iface == IFACE_CARD && name.starts_with("Headphone") && name.ends_with("Jack")
+            })
+            .and_then(|id| info(&card, *id));
+
         Some(Mixer {
+            index,
             card,
             volume,
             switch,
+            capture,
+            capture_switch,
+            jack,
         })
+    }
+
+    /// The microphone's level and whether it is off; `None` on a card
+    /// that doesn't record.
+    fn input(&self) -> Option<(u8, bool)> {
+        let dial = self.capture.as_ref()?;
+        let raw = read(&self.card, dial).unwrap_or(dial.min);
+        let muted = self
+            .capture_switch
+            .as_ref()
+            .is_some_and(|switch| read(&self.card, switch).unwrap_or(1) == 0);
+        Some((percent_of(raw, dial.min, dial.max), muted))
+    }
+
+    fn set_input(&self, percent: u8) {
+        if let Some(dial) = &self.capture {
+            write(&self.card, dial, raw_of(percent, dial.min, dial.max));
+        }
+    }
+
+    fn set_input_muted(&self, muted: bool) {
+        if let Some(switch) = &self.capture_switch {
+            write(&self.card, switch, i64::from(!muted));
+        }
+    }
+
+    /// Whether headphones are plugged in; `None` where the card doesn't
+    /// say.
+    fn headphones(&self) -> Option<bool> {
+        let jack = self.jack.as_ref()?;
+        Some(read(&self.card, jack).unwrap_or(0) != 0)
     }
 
     fn volume(&self) -> u8 {
@@ -293,6 +368,13 @@ struct Stands {
     mixer: Option<Mixer>,
     volume: u8,
     muted: bool,
+    /// The card chosen to play through, or `None` for the first there is.
+    chosen: Option<u32>,
+    /// Every card that could be: its number and its name.
+    outputs: Vec<(u32, String)>,
+    /// The kernel's list of cards as last read: the outputs are worked
+    /// out again when it changes.
+    cards: String,
 }
 
 #[derive(Clone)]
@@ -302,10 +384,17 @@ pub struct Sound(Arc<Mutex<Stands>>);
 /// card may come later (USB), and its volume may be turned by other means.
 pub fn start() -> Sound {
     let (volume, muted) = kept().unwrap_or((FIRST_VOLUME, false));
+    let chosen = kept_card();
+    if let Some(card) = chosen {
+        tell_library(card);
+    }
     let sound = Sound(Arc::new(Mutex::new(Stands {
         mixer: None,
         volume,
         muted,
+        chosen,
+        outputs: Vec::new(),
+        cards: String::new(),
     })));
 
     let watching = sound.clone();
@@ -317,12 +406,40 @@ pub fn start() -> Sound {
 }
 
 impl Sound {
-    /// `volume N` or `mute 0|1`.
+    /// `volume N`, `mute 0|1`, `input N`, `input-mute 0|1` or `output N`.
     pub fn ask(&self, word: &str, rest: &str) {
         let Ok(mut stands) = self.0.lock() else {
             return;
         };
         match (word, rest.trim().parse::<u8>()) {
+            ("input", Ok(level)) => {
+                if let Some(mixer) = &stands.mixer {
+                    mixer.set_input(level.min(100));
+                    if level > 0 {
+                        mixer.set_input_muted(false);
+                    }
+                }
+                say(&stands);
+                return;
+            }
+            ("input-mute", Ok(muted)) => {
+                if let Some(mixer) = &stands.mixer {
+                    mixer.set_input_muted(muted != 0);
+                }
+                say(&stands);
+                return;
+            }
+            // Play through another card: the dial is that card's from
+            // now, set as the volume was.
+            ("output", Ok(card)) => {
+                let card = u32::from(card);
+                if !stands.outputs.iter().any(|(index, _)| *index == card) {
+                    return;
+                }
+                stands.chosen = Some(card);
+                stands.mixer = Mixer::open(stands.chosen);
+                tell_library(card);
+            }
             ("volume", Ok(volume)) => {
                 stands.volume = volume.min(100);
                 // Turning it up is wanting to hear it.
@@ -344,8 +461,24 @@ impl Sound {
         let Ok(mut stands) = self.0.lock() else {
             return;
         };
+        // A card plugged in or pulled out: the outputs are listed anew,
+        // and one that has gone is let go of.
+        let cards = fs::read_to_string("/proc/asound/cards").unwrap_or_default();
+        if cards != stands.cards {
+            stands.outputs = outputs(&cards);
+            let gone = stands.mixer.as_ref().is_some_and(|mixer| {
+                !stands
+                    .outputs
+                    .iter()
+                    .any(|(index, _)| *index == mixer.index)
+            });
+            if gone {
+                stands.mixer = None;
+            }
+            stands.cards = cards;
+        }
         if stands.mixer.is_none() {
-            stands.mixer = Mixer::open();
+            stands.mixer = Mixer::open(stands.chosen);
             // A card just found plays as was chosen, not as it woke.
             apply(&stands);
         } else if let Some(mixer) = &stands.mixer {
@@ -376,10 +509,74 @@ fn apply(stands: &Stands) {
 }
 
 fn say(stands: &Stands) {
-    files::say(
-        "sound",
-        &lines(stands.mixer.is_some(), stands.volume, stands.muted),
-    );
+    let mut lines = lines(stands.mixer.is_some(), stands.volume, stands.muted);
+    let mixer = stands.mixer.as_ref();
+    lines.extend(more_lines(
+        mixer.and_then(Mixer::input),
+        mixer.and_then(Mixer::headphones),
+        &stands.outputs,
+        mixer.map(|mixer| mixer.index),
+    ));
+    files::say("sound", &lines);
+}
+
+/// What follows the volume: the microphone, the headphones' socket, and
+/// each card that can be played through (tabs between: number, whether
+/// it is the one in use, name).
+fn more_lines(
+    input: Option<(u8, bool)>,
+    headphones: Option<bool>,
+    outputs: &[(u32, String)],
+    playing: Option<u32>,
+) -> Vec<String> {
+    let mut lines = vec![format!("input {}", u8::from(input.is_some()))];
+    if let Some((level, muted)) = input {
+        lines.push(format!("input-volume {level}"));
+        lines.push(format!("input-muted {}", u8::from(muted)));
+    }
+    lines.push(match headphones {
+        Some(plugged) => format!("headphones {}", u8::from(plugged)),
+        None => "headphones none".to_string(),
+    });
+    for (index, name) in outputs {
+        let chosen = u8::from(playing == Some(*index));
+        lines.push(format!("output\t{index}\t{chosen}\t{name}"));
+    }
+    lines
+}
+
+/// The cards that can be played through, from the kernel's list of them
+/// (`/proc/asound/cards`): those with a volume to turn.
+fn outputs(cards: &str) -> Vec<(u32, String)> {
+    card_names(cards)
+        .into_iter()
+        .filter(|(index, _)| Mixer::of(*index).is_some())
+        .collect()
+}
+
+/// ` 0 [PCH            ]: HDA-Intel - HDA Intel PCH`: the number, and
+/// the name after the dash.
+fn card_names(cards: &str) -> Vec<(u32, String)> {
+    cards
+        .lines()
+        .filter_map(|line| {
+            let (number, rest) = line.trim_start().split_once(' ')?;
+            let index = number.parse::<u32>().ok()?;
+            let described = rest.split_once("]: ")?.1;
+            let name = described
+                .split_once(" - ")
+                .map_or(described, |(_, name)| name);
+            Some((index, name.trim().to_string()))
+        })
+        .collect()
+}
+
+/// Have the sound library play through `card` by default.
+fn tell_library(card: u32) {
+    let text = format!("defaults.pcm.card {card}\ndefaults.ctl.card {card}\n");
+    if let Err(error) = fs::write(LIBRARY, text) {
+        eprintln!("saule-system: could not choose the sound card: {error}");
+    }
 }
 
 fn lines(card: bool, volume: u8, muted: bool) -> Vec<String> {
@@ -392,13 +589,24 @@ fn lines(card: bool, volume: u8, muted: bool) -> Vec<String> {
 
 fn keep(stands: &Stands) {
     if std::path::Path::new("/data/system").is_dir() {
-        let text = format!(
+        let mut text = format!(
             "volume {}\nmuted {}\n",
             stands.volume,
             u8::from(stands.muted)
         );
+        if let Some(card) = stands.chosen {
+            text.push_str(&format!("card {card}\n"));
+        }
         let _ = fs::write(KEPT, text);
     }
+}
+
+/// The card chosen before, if one was.
+fn kept_card() -> Option<u32> {
+    fs::read_to_string(KEPT)
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("card ")?.trim().parse().ok())
 }
 
 fn kept() -> Option<(u8, bool)> {
@@ -431,6 +639,45 @@ mod tests {
         assert_eq!(ELEM_INFO as u32, 0xc110_5511);
         assert_eq!(ELEM_READ as u32, 0xc4c8_5512);
         assert_eq!(ELEM_WRITE as u32, 0xc4c8_5513);
+    }
+
+    #[test]
+    fn the_microphone_the_socket_and_the_cards_follow_the_volume() {
+        let outputs = vec![
+            (0, "HDA Intel PCH".to_string()),
+            (2, "USB Audio".to_string()),
+        ];
+        assert_eq!(
+            more_lines(Some((70, true)), Some(false), &outputs, Some(2)),
+            [
+                "input 1",
+                "input-volume 70",
+                "input-muted 1",
+                "headphones 0",
+                "output\t0\t0\tHDA Intel PCH",
+                "output\t2\t1\tUSB Audio",
+            ]
+        );
+        assert_eq!(
+            more_lines(None, None, &[], None),
+            ["input 0", "headphones none"]
+        );
+    }
+
+    #[test]
+    fn the_kernel_s_list_of_cards_gives_each_a_number_and_a_name() {
+        let cards = " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n\
+                     \x20                     HDA Intel PCH at 0xf7f10000 irq 33\n\
+                     \x20 2 [Device         ]: USB-Audio - USB Audio Device\n\
+                     \x20                     C-Media USB Audio Device at usb-1\n";
+        assert_eq!(
+            card_names(cards),
+            [
+                (0, "HDA Intel PCH".to_string()),
+                (2, "USB Audio Device".to_string())
+            ]
+        );
+        assert_eq!(card_names("--- no soundcards ---\n"), []);
     }
 
     #[test]
