@@ -18,7 +18,19 @@
 #   make apps         build only the apps, into build/apps (for the window
 #                     manager nested on a desktop: see saule-wm's README)
 #
-#   make test         run init's tests
+#   make usb-image    build/saule-linux.img: a USB stick, as a file. Written
+#                     to a stick, a PC with a BIOS starts from it into the
+#                     installer, which puts Saule Linux on the PC's disk
+#   make usb DEVICE=/dev/sdX
+#                     write that image to the stick at DEVICE (as root;
+#                     everything on the stick is erased). From Windows: write
+#                     build/saule-linux.img with Rufus, in its DD mode
+#   make run-usb      start the QEMU netbook from the stick: the installer,
+#                     with the netbook's hard disk (DISK=file for another)
+#   make run-disk     start the QEMU netbook from its hard disk alone: what
+#                     the installer put there
+#
+#   make test         run init's and the installer tool's tests
 #
 #   make menuconfig   change kernel options (copy keepers to config/kernel.config)
 #   make check-config list options config/kernel.config asked for but didn't get
@@ -31,7 +43,9 @@
 # Host packages (Ubuntu): build-essential flex bison bc libelf-dev libssl-dev
 # cpio qemu-system-x86 busybox-static, plus
 # `rustup target add x86_64-unknown-linux-musl`. busybox-static is the
-# command-line tools (TOOLS=1, the default) and the DEBUG=1 shell.
+# command-line tools (TOOLS=1, the default) and the DEBUG=1 shell. A stick
+# also needs GRUB (grub-pc-bin grub2-common), which scripts/mkgrub.sh fetches
+# for itself where they aren't installed.
 
 KERNEL_VERSION ?= 6.18.64
 JOBS           ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
@@ -61,6 +75,25 @@ INITRAMFS := $(BUILD)/initramfs.cpio.gz
 SESSION   := $(BUILD)/session
 APPS_OUT  := $(BUILD)/apps
 TARBALL   := $(BUILD)/downloads/linux-$(KERNEL_VERSION).tar.xz
+
+# The installer: its window (installer/, a Saule project) and the program
+# that does its writing (install/, Rust): for the netbook, static, and for
+# this machine, where it makes the stick's image.
+INSTALLER    := $(BUILD)/installer
+INSTALL_TOOL := install/target/x86_64-unknown-linux-musl/release/saule-install
+INSTALL_HOST := install/target/release/saule-install
+
+# The USB stick: what goes on it is put together in build/usb, and the stick
+# itself is one file, USB_IMAGE.
+USB       := $(BUILD)/usb
+USB_IMAGE ?= $(BUILD)/saule-linux.img
+# The kernel options the stick starts with and hands on to the system it
+# installs.
+BOOT_OPTIONS ?= quiet
+# The graphics driver packs the stick carries: every one that is built
+# (`make drivers DRIVERS=gen3`). The installer gives a machine the one its
+# chip needs (config/drivers.list).
+PACKS ?= $(filter-out libdrm,$(notdir $(patsubst %/usr,%,$(wildcard $(BUILD)/drivers/*/usr))))
 KERNEL_URL := https://cdn.kernel.org/pub/linux/kernel/v$(firstword $(subst ., ,$(KERNEL_VERSION))).x/linux-$(KERNEL_VERSION).tar.xz
 
 ifeq ($(DEBUG),1)
@@ -95,7 +128,7 @@ DRIVERS_DIR := $(wildcard $(BUILD)/drivers/$(DRIVERS))
 FONTS       ?= $(wildcard /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
                           /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)
 
-# KVM when this user may use it (add yourself to the `kvm` group), plain
+# KVM when this user may use it (members of the `kvm` group may), plain
 # emulation otherwise.
 QEMU_ACCEL := $(shell [ -w /dev/kvm ] && echo "-enable-kvm -cpu host")
 QEMU_FLAGS ?= -m 2G -smp 2 -no-reboot $(QEMU_ACCEL) \
@@ -128,6 +161,7 @@ ifeq ($(HOST_OS),Darwin)
 endif
 
 .PHONY: all kernel init session apps drivers initramfs test
+.PHONY: installer usb-image usb run-usb run-disk
 .PHONY: run run-gui run-vnc run-netbook run-vesa
 .PHONY: menuconfig check-config clean distclean
 
@@ -185,6 +219,7 @@ init:
 
 test:
 	cd init && cargo test
+	cd install && cargo test
 
 $(GEN_CPIO): $(KSRC)/Makefile
 	mkdir -p $(dir $@)
@@ -225,6 +260,54 @@ initramfs: init session apps $(GEN_CPIO)
 	FS_TOOLS="$(FS_TOOLS)" \
 	WALLPAPERS="$(wildcard $(WM)/wallpapers)" scripts/mkinitramfs.sh $(INITRAMFS)
 
+# ---------------------------------------------------------------------------
+# The installer and the USB stick
+# ---------------------------------------------------------------------------
+
+installer:
+	@test -n "$(SAULE)" || { echo "saule not found: install it or pass SAULE=/path/to/saule"; exit 1; }
+	$(SAULE) build installer -o $(INSTALLER)
+	cd install && cargo build --release --target x86_64-unknown-linux-musl
+	cd install && cargo build --release
+
+# The stick, as one file. On it, in an ext2 file system GRUB reads:
+#
+#   vmlinuz, initramfs.cpio.gz   the system, with no graphics driver pack
+#   installer.cpio.gz            the installer, unpacked over the system when
+#                                the stick starts: an installed system does
+#                                not carry it
+#   drivers/<pack>.cpio.gz       every pack built, of which a machine takes one
+#   drivers.list                 which chip takes which
+#   cmdline                      the kernel options an installed system gets
+#   grub/                        GRUB, and its configuration for the stick
+#
+# install/src/layout.rs says where things are on the disk; nothing here
+# needs root.
+usb-image: kernel installer $(GEN_CPIO)
+	rm -rf $(USB)
+	mkdir -p $(USB)/root/grub $(USB)/root/drivers
+	$(MAKE) initramfs INITRAMFS=$(USB)/root/initramfs.cpio.gz DRIVERS=none
+	cp $(BZIMAGE) $(USB)/root/vmlinuz
+	scripts/mkgrub.sh $(USB)/root/grub
+	STAGE=$(USB)/stage GEN_INIT_CPIO=$(GEN_CPIO) scripts/mkoverlay.sh $(USB)/root/installer.cpio.gz \
+		--program $(INSTALLER)=/bin/installer --program $(INSTALL_TOOL)=/sbin/saule-install
+	for pack in $(PACKS); do \
+		STAGE=$(USB)/stage GEN_INIT_CPIO=$(GEN_CPIO) scripts/mkoverlay.sh \
+			$(USB)/root/drivers/$$pack.cpio.gz --drivers $(BUILD)/drivers/$$pack || exit 1; \
+	done
+	cp config/drivers.list $(USB)/root/drivers.list
+	echo "$(BOOT_OPTIONS)" > $(USB)/root/cmdline
+	$(INSTALL_HOST) config "$(BOOT_OPTIONS) saule.installer=1" /installer.cpio.gz > $(USB)/root/grub/grub.cfg
+	$(INSTALL_HOST) image $(USB_IMAGE) $(USB)/root
+
+# Write the image to a stick. The whole device (/dev/sdb, not /dev/sdb1),
+# and as root; WSL does not see USB sticks at all, so from Windows write
+# build/saule-linux.img with Rufus (DD mode) or balenaEtcher.
+usb: usb-image
+	@test -n "$(DEVICE)" || { echo "usage: make usb DEVICE=/dev/sdX   (the whole stick: everything on it is erased)"; exit 1; }
+	@test -b "$(DEVICE)" || { echo "$(DEVICE) is not a disk"; exit 1; }
+	dd if=$(USB_IMAGE) of=$(DEVICE) bs=4M conv=fsync status=progress
+
 endif  # not Darwin
 
 # ---------------------------------------------------------------------------
@@ -251,8 +334,8 @@ run-vnc: all
 		-serial stdio -append "console=ttyS0 console=tty1 $(APPEND)"
 
 # QEMU dressed as the HP Mini 210-1001sa (Atom N450, 1 GB, SeaBIOS, 1024x600
-# VGA, EHCI, PS/2): see scripts/qemu-netbook.sh. Loads the kernel directly
-# until there is a USB stick image; then `scripts/qemu-netbook.sh --usb IMAGE`.
+# VGA, EHCI, PS/2): see scripts/qemu-netbook.sh. Loads the kernel directly,
+# with no bootloader; `make run-usb` starts it from a stick instead.
 #
 #   SLOW=1     about the netbook's speed (KVM capped at 8% of a core);
 #   SLOW=12    the same with another percentage, while calibrating
@@ -271,6 +354,29 @@ run-netbook: all
 	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) \
 		--memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL) --append "$(APPEND)"
 
+# The QEMU netbook started as the real one will be: from a USB stick,
+# through the BIOS and GRUB, into the installer. The stick is one made for
+# QEMU, since its kernel options ride on the stick: the serial console on
+# this terminal, and the panel's size pinned (see scripts/qemu-netbook.sh).
+#
+# What the installer installs on is the netbook's own hard disk,
+# disks/netbook.qcow2, so its "Erase" erases what was saved there.
+# DISK=some/other.qcow2 for a disk to practise on. QEMU can't take the stick
+# out, so after installing, shut down and `make run-disk`.
+DISK ?= disks/netbook.qcow2
+QEMU_USB_IMAGE    := $(BUILD)/saule-linux-qemu.img
+QEMU_BOOT_OPTIONS := console=ttyS0 console=tty1 video=Virtual-1:1024x600 \
+                     $(if $(WSL_DISTRO_NAME),saule.env.SAULE_WM_KEY=ctrl+alt) $(APPEND)
+run-usb:
+	$(MAKE) usb-image USB_IMAGE=$(QEMU_USB_IMAGE) BOOT_OPTIONS="$(strip $(QEMU_BOOT_OPTIONS))"
+	QEMU=$(QEMU) scripts/qemu-netbook.sh --usb $(QEMU_USB_IMAGE) --disk $(DISK) \
+		--memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL)
+
+# The QEMU netbook started from its hard disk alone, as it starts once
+# Saule Linux is installed on it.
+run-disk:
+	QEMU=$(QEMU) scripts/qemu-netbook.sh --disk $(DISK) --memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL)
+
 # The netbook with no graphics driver: the screen the BIOS set up, drawn
 # through simpledrm. What it would show if i915 failed on its chip.
 run-vesa: all
@@ -282,9 +388,12 @@ run-vesa: all
 ifneq ($(HOST_OS),Darwin)
 clean:
 	rm -rf $(KOUT) $(BUILD)/rootfs $(BUILD)/tools $(INITRAMFS) $(SESSION)
+	rm -rf $(USB) $(INSTALLER) $(BUILD)/saule-linux.img $(BUILD)/saule-linux-qemu.img
 	cd init && cargo clean
+	cd install && cargo clean
 
 distclean:
 	rm -rf $(BUILD)
 	cd init && cargo clean
+	cd install && cargo clean
 endif
