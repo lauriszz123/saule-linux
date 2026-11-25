@@ -23,10 +23,13 @@
 //!   saule.on_exit=shell     what to do when the session returns:
 //!                           poweroff | reboot | restart | shell
 //!                           (default: shell when /bin/sh exists, else poweroff)
+//!   saule.installer=1       started from the stick: the session is the
+//!                           installer, as root, and no disk is mounted
 
 mod account;
 mod cmdline;
 mod console;
+mod installer;
 mod log;
 mod mounts;
 mod output;
@@ -51,7 +54,13 @@ fn main() {
     let cmdline = Cmdline::read();
     set_hostname();
     log::banner();
-    storage::mount_data();
+    // From the stick, the disks are the installer's to decide about: a
+    // blank one is not made a data disk behind its back.
+    if cmdline.installer {
+        installer::prepare();
+    } else {
+        storage::mount_data();
+    }
 
     session::supervise(&cmdline);
 }

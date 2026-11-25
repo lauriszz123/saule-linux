@@ -21,7 +21,20 @@ pub struct Cmdline {
     /// frame times on the console). The session otherwise starts with a
     /// clean environment.
     pub env: Vec<(String, String)>,
+    /// Started from the stick Saule Linux is installed from
+    /// (`saule.installer=1`, which the stick's GRUB passes): the session is
+    /// the installer, as root since it writes to disks, and no disk is
+    /// mounted or made into a data disk: the installer decides what
+    /// happens to them. `saule.session` and `saule.user` still override.
+    pub installer: bool,
 }
+
+/// The installer: `installer/` built with `saule build`.
+pub const INSTALLER: &str = "/bin/installer";
+/// What starts when no option says, and when the installer is left to try
+/// the system first.
+pub const SESSION: &str = "/bin/session";
+pub const USER: &str = "display";
 
 impl Cmdline {
     pub fn read() -> Cmdline {
@@ -30,15 +43,18 @@ impl Cmdline {
     }
 
     fn parse(text: &str) -> Cmdline {
+        let mut session = None;
+        let mut user = None;
         let mut cmdline = Cmdline {
-            session: "/bin/session".into(),
-            user: "display".into(),
+            session: SESSION.into(),
+            user: USER.into(),
             on_exit: if crate::session::has_shell() {
                 OnExit::Shell
             } else {
                 OnExit::PowerOff
             },
             env: Vec::new(),
+            installer: false,
         };
 
         for word in text.split_whitespace() {
@@ -47,8 +63,9 @@ impl Cmdline {
             };
 
             match key {
-                "saule.session" => cmdline.session = value.into(),
-                "saule.user" => cmdline.user = value.into(),
+                "saule.session" => session = Some(value.to_string()),
+                "saule.user" => user = Some(value.to_string()),
+                "saule.installer" => cmdline.installer = value == "1",
                 "saule.on_exit" => match value {
                     "poweroff" => cmdline.on_exit = OnExit::PowerOff,
                     "reboot" => cmdline.on_exit = OnExit::Reboot,
@@ -63,6 +80,17 @@ impl Cmdline {
                     }
                 }
             }
+        }
+
+        if cmdline.installer {
+            cmdline.session = INSTALLER.into();
+            cmdline.user = "root".into();
+        }
+        if let Some(session) = session {
+            cmdline.session = session;
+        }
+        if let Some(user) = user {
+            cmdline.user = user;
         }
 
         cmdline
@@ -84,6 +112,25 @@ mod tests {
     #[test]
     fn the_session_and_its_account() {
         let cmdline = Cmdline::parse("saule.session=/bin/apps/bench saule.user=root");
+        assert_eq!(cmdline.session, "/bin/apps/bench");
+        assert_eq!(cmdline.user, "root");
+    }
+
+    #[test]
+    fn the_stick_starts_the_installer_as_root() {
+        let cmdline = Cmdline::parse("quiet saule.installer=1");
+        assert!(cmdline.installer);
+        assert_eq!(cmdline.session, "/bin/installer");
+        assert_eq!(cmdline.user, "root");
+
+        assert!(!Cmdline::parse("quiet").installer);
+        assert!(!Cmdline::parse("saule.installer=0").installer);
+    }
+
+    #[test]
+    fn the_installer_s_session_can_still_be_named() {
+        let cmdline = Cmdline::parse("saule.session=/bin/apps/bench saule.installer=1");
+        assert!(cmdline.installer);
         assert_eq!(cmdline.session, "/bin/apps/bench");
         assert_eq!(cmdline.user, "root");
     }

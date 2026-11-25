@@ -6,8 +6,8 @@
 //! decides what happens when it ends:
 //!
 //! - it **returned** (exit code 0)  → follow `saule.on_exit`;
-//! - it **asked** for something (exit codes 80–82) → power off, reboot, or
-//!   start a new session;
+//! - it **asked** for something (exit codes 80–83) → power off, reboot,
+//!   start a new session, or, from the installer, start the system itself;
 //! - it **crashed** (non-zero/signal) → start it again after a second; if it
 //!   keeps crashing straight away, stop and fall back to a shell or power off.
 
@@ -18,7 +18,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::account::{self, Account, Switch};
-use crate::cmdline::{Cmdline, OnExit};
+use crate::cmdline::{self, Cmdline, OnExit};
 use crate::output::Output;
 use crate::power::{self, Request};
 use crate::{console, log, storage};
@@ -46,6 +46,10 @@ enum Outcome {
 pub const EXIT_POWER_OFF: i32 = 80;
 pub const EXIT_REBOOT: i32 = 81;
 pub const EXIT_LOG_OUT: i32 = 82;
+/// From the installer only: don't install now, start Saule Linux as it
+/// runs from the stick. The ordinary session, as its ordinary account, for
+/// the rest of this start; nothing is kept, as no disk was mounted.
+pub const EXIT_TRY: i32 = 83;
 
 pub fn has_shell() -> bool {
     Path::new(SHELL).exists()
@@ -53,16 +57,15 @@ pub fn has_shell() -> bool {
 
 pub fn supervise(cmdline: &Cmdline) -> ! {
     let mut quick_crashes = 0;
+    let mut session = cmdline.session.clone();
+    let mut user = cmdline.user.clone();
 
     loop {
-        log::info(&format!(
-            "starting session: {} as {}",
-            cmdline.session, cmdline.user
-        ));
+        log::info(&format!("starting session: {session} as {user}"));
 
         let started = Instant::now();
-        let outcome = match session_account(&cmdline.user) {
-            Ok(account) => run(&cmdline.session, &[], &cmdline.env, &account),
+        let outcome = match session_account(&user) {
+            Ok(account) => run(&session, &[], &cmdline.env, &account),
             Err(error) => Outcome::NotStarted(error),
         };
         console::reset_vt();
@@ -82,10 +85,17 @@ pub fn supervise(cmdline: &Cmdline) -> ! {
                 quick_crashes = 0;
                 continue;
             }
+            Outcome::Exited(EXIT_TRY) if cmdline.installer => {
+                log::info("trying the system without installing it");
+                session = cmdline::SESSION.into();
+                user = cmdline::USER.into();
+                quick_crashes = 0;
+                continue;
+            }
             Outcome::Exited(code) => format!("session exited with code {code}"),
             Outcome::Killed(signal) => format!("session killed by signal {signal}"),
             Outcome::NotStarted(error) => {
-                format!("could not start {}: {error}", cmdline.session)
+                format!("could not start {session}: {error}")
             }
         };
 
