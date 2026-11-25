@@ -3,8 +3,8 @@
 Where Saule Linux is going, in the order it gets built. Each phase ends with
 something that runs.
 
-**Owners:** 🦀 = Rust, written by Claude. 🌙 = Saule, written by the user
-with Claude's guidance.
+**Layers:** 🦀 = Rust: init, the kernel's configuration, natives. 🌙 =
+Saule: the session, the window manager, the apps.
 
 ```
  ┌──────────────────────────────────────────────────────────────────┐
@@ -35,17 +35,26 @@ with Claude's guidance.
 
 ## Phase 1: a real distro 🦀
 
-The bootable stick waits: everything is developed in QEMU for now
-(`make run-netbook` dresses QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it
-at about its speed).
+The netbook has a BIOS and no EFI, so the stick and the disk boot through
+GRUB for a BIOS. Everything is developed in QEMU (`make run-netbook` dresses
+QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
 
-- [ ] **`make image`**: build the initramfs *into* the kernel
-      (`CONFIG_INITRAMFS_SOURCE`) so the whole system is one
-      `BOOTX64.EFI`.
-- [ ] **`make run-efi`**: boot that file under UEFI firmware (OVMF), the
-      way a real PC will.
-- [ ] **`make usb DEVICE=…`**: write a FAT32 EFI partition to a stick, and
-      boot a real PC from it.
+- [x] **`make usb-image`**: a USB stick as one file, made without root: an
+      MBR, GRUB, and an ext2 file system holding the kernel, the initramfs,
+      the installer and the driver packs.
+- [x] **`make run-usb`**: the QEMU netbook started from that stick through
+      SeaBIOS, the way the real one will be.
+- [x] **`make usb DEVICE=…`**: write it to a stick.
+- [x] **The installer** (`installer/`, `install/`): choose a disk, see what
+      is on it, install, restart. It keeps the files of a Saule Linux
+      already there when asked, and gives the machine the one graphics
+      driver pack its chip needs.
+  - [ ] a first start after installing: the computer's name, the time
+        zone, the look;
+  - [ ] installing beside Windows instead of over it.
+- [ ] **On the real netbook**: nothing here has run on it yet. The stick
+      booting from its BIOS, the `gen3` driver pack on its GMA 3150 (built
+      without LLVM: `scripts/patches/`), the touchpad.
 - [x] **Persistent storage**: init mounts a data disk at `/data` (an ext
       file system labelled `SAULE`; an internal disk that is completely
       empty is partitioned and formatted for it, one with anything on it is
@@ -65,7 +74,14 @@ at about its speed).
       the chip. The fallback when a chip has no driver, the screen the
       BIOS set up through simpledrm, runs in `make run-vesa`. About This
       System names the card (PCI ids, `pci.ids` where there is one).
-- [ ] **Real-time clock**, so `Os.date()` is right.
+      Its driver pack, `gen3`, is built (`make drivers DRIVERS=gen3`): Mesa's
+      i915 without LLVM, which would be 100 MB in a machine with 1 GB
+      (`scripts/patches/mesa-i915-without-llvm.patch`). In QEMU the pack
+      loads and draws through its software driver; the chip's own driver
+      first runs on the chip.
+- [x] **The clock**: the kernel reads the PC's clock when it starts, so
+      `Os.date()` is right, in UTC.
+  - [ ] a time zone.
 - [ ] **No glibc in the image**: needs the static musl runner (phase 2).
 
 ## Phase 2: `saule build` 🦀 (in ~/saule) — first version ✅
@@ -170,7 +186,8 @@ What the display server needs from Rust. Everything above it is Saule.
 - [x] Where it lives: its own repo, [saule-wm](https://github.com/lauriszz123/saule-wm).
       `make` builds `../saule-wm` as the session when it's there (`WM=…`
       points elsewhere), and init starts it as the `display` account.
-- [ ] **Protocol**: messages and their encoding.
+- [x] **Protocol**: messages and their encoding. It is Shine's own
+      (client mode and `Compositor`, phase 3), so an app needs no change.
   - client → server: `hello`, `createWindow(title, w, h)`, `commit(damage)`,
     `setTitle`, `destroyWindow`;
   - server → client: `configure(w, h)`, input events, `focus`,
@@ -178,50 +195,53 @@ What the display server needs from Rust. Everything above it is Saule.
 
   `configure` matters from day one: in tiling mode the **server** decides a
   window's size, and the client redraws at that size.
-- [ ] **Server loop**: accept clients, read messages, keep the window list,
+- [x] **Server loop**: accept clients, read messages, keep the window list,
       composite into the screen, and route input to the focused window.
-- [ ] **Nested mode first**: the server runs as an ordinary Shine window on
+- [x] **Nested mode first**: the server runs as an ordinary Shine window on
       the desktop (WSLg), so it can be developed before the console
       backend exists.
-- [ ] **Test client**: a window with a bouncing square, which prints the
-      input it receives.
-- [ ] **Milestone**: two test clients side by side, each getting its own
+- [x] **Test client**: `examples/shine-demo`.
+- [x] **Milestone**: two test clients side by side, each getting its own
       clicks.
 
 ## Phase 5: tiling window manager 🌙
 
-- [ ] **Layout model**: either a split tree (i3-style) or master and stack
-      (dwm-style); decide at the start of the phase.
-- [ ] **Focus and shortcuts**:
+- [x] **Layout model**: a split tree (i3-style).
+- [x] **Focus and shortcuts** (the keys as built are in saule-wm's README;
+      they follow the desktop it runs on and can be changed in Settings):
   - `Super+Enter` opens the launcher;
   - `Super+arrows` moves focus;
   - `Super+Shift+arrows` moves windows;
   - `Super+Q` closes a window.
-- [ ] **Decorations** (server-side title bars and borders), in the style of
+- [x] **Decorations** (server-side title bars and borders), in the style of
       gamemaker's theme.
-- [ ] **Workspaces**.
-- [ ] **Launcher**: start a Saule app as a client process. Through init's
-      launcher service once it exists (see Security, step 2), not
-      `Os.spawn`, so apps don't inherit the window manager's access.
-- [ ] **Milestone**: Saule Linux boots straight into the window manager.
+- [x] **Workspaces**.
+- [x] **Launcher**: start a Saule app as a client process.
+  - [ ] through init's launcher service once it exists (see Security,
+        step 2), not `Os.spawn`, so apps don't inherit the window
+        manager's access.
+- [x] **Milestone**: Saule Linux boots straight into the window manager.
 
 ## Phase 6: floating mode, switchable 🌙
 
-- [ ] Toggle per workspace and per window.
-- [ ] Move, resize, stacking order, minimise and maximise. Most of this logic
-      already exists in gamemaker's MDI.
+- [x] Floating windows, beside the tiled ones.
+- [x] Move, resize, stacking order and zoom.
+  - [ ] minimise: the button is drawn, and there is nowhere yet for a
+        window to go.
 - [ ] Tiled windows remember their place when a window floats and comes
       back.
 
 ## Phase 7: apps 🌙
 
-- [ ] Gamemaker running as a client, unchanged.
+- [x] Gamemaker running as a client, unchanged.
 - [ ] A terminal. What it needs from Rust is done 🦀: `Os.spawnPty` runs a
       shell behind a pseudo-terminal (Unix pty / Windows ConPTY), the kernel
       has pseudo-terminals and init mounts `/dev/pts`, and every image has
       BusyBox's tools in `/usr/bin` (`TOOLS=1`, the default). Checked on
       Saule Linux with `examples/pty-check`.
-- [ ] Settings, a file browser, …
+- [x] Settings and About This System
+      ([saule-linux-apps](https://github.com/lauriszz123/saule-linux-apps)).
+- [ ] A file browser, a text editor.
 
 ## Security: the macOS model 🦀🌙
 

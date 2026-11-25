@@ -58,7 +58,11 @@ Then:
 | `make TOOLS=0 …` | leave out the command-line tools (BusyBox in `/usr/bin`, there by default for a terminal app's shell) |
 | `make APPEND="saule.on_exit=restart" run` | pass kernel command line options |
 | `make apps` | build only the apps, into `build/apps`: what the window manager opens when it runs nested on a desktop |
-| `make test` | run init's tests |
+| `make usb-image` | `build/saule-linux.img`, a USB stick as a file: see [Installing](#installing) |
+| `make usb DEVICE=/dev/sdX` | write that image to a stick (as root; the stick is erased) |
+| `make run-usb` | the QEMU netbook started from the stick, into the installer. `DISK=file.qcow2` gives it a disk to practise on instead of `disks/netbook.qcow2` |
+| `make run-disk` | the QEMU netbook started from its hard disk alone: what the installer put there |
+| `make test` | run init's and the installer tool's tests |
 | `make menuconfig` | change kernel options; copy the keepers into `config/kernel.config` |
 | `make check-config` | list options `config/kernel.config` asked for but didn't get |
 | `make clean` / `make distclean` | remove build output / everything including the kernel source. Neither touches `disks/` |
@@ -104,7 +108,7 @@ Kernel command line options read by init:
 | Option | Default | |
 |---|---|---|
 | `saule.session=PATH` | `/bin/session` | the executable to run as the session |
-| `saule.user=NAME` | `display` | the account it runs as; `root` only when you ask for it |
+| `saule.user=NAME` | `display` | the account it runs as; `root` only when asked for |
 | `saule.on_exit=…` | `shell` if `/bin/sh` exists, else `poweroff` | `poweroff`, `reboot`, `restart` or `shell` |
 | `saule.env.NAME=value` | | adds `NAME=value` to the session's otherwise clean environment, e.g. `saule.env.SHINE_TRACE_FRAMES=1` for its frame times on the console |
 
@@ -120,6 +124,64 @@ Shut Down, Restart and Log Out use this):
 | 82 | log out: start a new session at once |
 | anything else | a crash: restart it after a second (five quick ones in a row give up) |
 
+## Installing
+
+`make usb-image` builds `build/saule-linux.img`: a USB stick, as one file.
+Write it to a stick (`make usb DEVICE=/dev/sdX` as root; from Windows, Rufus
+in its DD mode or balenaEtcher), and a PC with a BIOS starts from it. No
+EFI is needed or used: the netbook has none.
+
+The stick starts the **installer** (`installer/`, a Saule program):
+
+1. **Welcome**: install, or *Try It First*, which starts Saule Linux as it
+   runs from the stick and touches no disk.
+2. **Choose a disk**: every disk but the stick, with its size and what is
+   on it: empty, Windows, another Linux, Saule Linux.
+3. **Confirm**: said to fit the disk. An empty one is simply installed on.
+   One with Windows on it says so, and asks to erase with a button Enter
+   can't press. One with Saule Linux already offers to keep its files:
+   the system is written again and `/data` is left alone.
+4. **Installing**, then **Restart**, with the stick taken out first.
+
+What it installs:
+
+```
+sector 0          GRUB's first stage, and the partition table (MBR)
+sectors 1–2047    GRUB itself
+partition 1       SAULE-BOOT, ext2, 512 MB: the kernel, the initramfs, one
+                  graphics driver pack, GRUB's configuration
+partition 2       SAULE, ext4: /data, the rest of the disk
+```
+
+The system still runs from memory once installed: GRUB loads the kernel and
+the initramfs from the first partition, which is then never mounted, so no
+power cut and no program can leave a machine that doesn't start. The second
+partition is the [data disk](#storage).
+
+**One driver pack per machine.** The stick carries every graphics driver
+pack that was built (`make drivers DRIVERS=gen3`), each as an archive the
+kernel unpacks over the initramfs. The installer looks at the machine's
+graphics chip (`config/drivers.list`), copies the one pack it needs and
+names it in GRUB's configuration; the stick itself unpacks the right one
+before the installer starts, so the installer draws on the GPU too. A chip
+with no pack is drawn for on the CPU.
+
+The writing is done by `saule-install` (`install/`, Rust), which the
+installer runs and watches: `saule-install disks` lists what it shows, and
+`saule-install install sda` does the rest. The same program makes the
+stick's image on the build machine, so both disks are laid out by one piece
+of code. GRUB's two files are built by `scripts/mkgrub.sh`.
+
+In QEMU: `make run-usb` starts the netbook from a stick, and what it
+installs on is the netbook's disk, `disks/netbook.qcow2` — or
+`DISK=build/practice.qcow2`, made empty the first time. QEMU can't take
+the stick out, so after installing, shut down and `make run-disk`. To see
+the installer's pages on a desktop without installing anything:
+`cd installer && SAULE_INSTALL=dev/fake-install saule run .`
+
+A stick's kernel options are `BOOT_OPTIONS` (default `quiet`), which the
+installed system inherits.
+
 ## Storage
 
 The system runs from memory: the initramfs is all of it, and what it writes
@@ -127,12 +189,14 @@ there is gone at power-off. What should last goes on the **data disk**,
 which init (`init/src/storage.rs`) mounts at `/data`:
 
 - an ext2/3/4 file system labelled `SAULE`, on any disk or partition, is
-  the data disk (`mke2fs -L SAULE /dev/sdX1` makes one by hand);
+  the data disk: the [installer](#installing) makes one, and
+  `mke2fs -L SAULE /dev/sdX1` makes one by hand;
 - failing that, an internal disk that is **completely empty** — nothing in
   its first megabyte — gets one partition with such a file system: ext4,
   journaled;
 - a disk with anything on it is never touched, and neither is one on a USB
-  port. The netbook's disk may still hold Windows.
+  port. The netbook's disk may still hold Windows. Started from the stick,
+  no disk is touched at all until the installer is told to.
 
 With a data disk the session's home is `/data/home/display`, and it gets
 `SAULE_DATA=/data`. The window manager keeps its settings in
@@ -167,12 +231,13 @@ another. `make run` and `make run-gui` have no disk.
 ```
 Makefile                 the whole build, and the `run` targets
 config/
-  kernel.config          every kernel option we turn on, grouped and explained
+  kernel.config          every kernel option turned on, grouped and explained
   drivers.list           which graphics driver pack each graphics chip needs
 init/                    PID 1 (Rust)
   src/main.rs            the boot sequence
   src/mounts.rs          /proc /sys /dev /run /tmp
   src/storage.rs         the data disk: find it, or make it, and mount /data
+  src/installer.rs       started from the stick: the driver pack, unpacked
   src/console.rs         the real terminal behind /dev/console (for Ctrl-C)
   src/session.rs         start the session, restart it, reap orphans
   src/output.rs          what the session prints, copied to every console
@@ -181,6 +246,18 @@ init/                    PID 1 (Rust)
   src/power.rs           poweroff / reboot and the signals for them
   src/cmdline.rs         saule.* kernel options
   src/log.rs             init's own messages
+install/                 saule-install (Rust): lays out a disk, puts GRUB on
+                         it, installs; also makes the stick's image
+  src/layout.rs          where things are on a disk
+  src/grub.rs            GRUB's two files, written where the BIOS looks
+  src/disks.rs           the machine's disks, and what is on each
+  src/drivers.rs         which driver pack a graphics chip needs
+  src/target.rs          installing onto this machine's disk
+  src/image.rs           a stick's image, made on the build machine
+installer/               the installer's window, a Saule project (uikit)
+  src/model/             the disks, the installation under way, the tool
+  src/pages/             one view per step
+  dev/fake-install       stands in for saule-install on a desktop
 session/                 the fallback session: a hello-world Saule project,
                          built when there is no ../saule-wm
 examples/                small sessions and apps for trying one thing
@@ -195,6 +272,11 @@ rootfs/                  copied into the image as is
   etc/                   hostname, motd, passwd, group, profile
 scripts/
   mkinitramfs.sh         assemble the tree (+ shared libraries) and pack it
+  mkoverlay.sh           pack what is unpacked over it at boot: a driver
+                         pack, the installer
+  stage.sh               what those two share
+  mkgrub.sh              GRUB for a BIOS, as the two files a disk boots with
+  patches/               changes made to Mesa, each saying why
   check-config.sh        catch kernel options that were silently dropped
   build-drivers.sh       build the graphics driver packs (Mesa, libdrm)
   qemu-netbook.sh        QEMU dressed as the HP Mini 210-1001sa
@@ -222,8 +304,9 @@ The plan follows macOS (see ROADMAP.md, "Security"). Today:
 Apps the window manager starts today run as `display` too. Separating them
 is the next step on the roadmap.
 
-## Who writes what
+## The two layers
 
-The Rust layer (init, kernel config, native Saule packages, `saule build`)
-is written by Claude. The Saule layer (the session, the display server, the
-window manager) is written by the user, with Claude's guidance.
+The Rust layer is what a Saule program can't be: init, the kernel's
+configuration, `saule-install`, native Saule packages and `saule build`.
+Everything a person sees is the Saule layer: the session, the display
+server and window manager, the apps, and the installer's window.
