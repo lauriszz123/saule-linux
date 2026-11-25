@@ -128,15 +128,21 @@ Shut Down, Restart and Log Out use this):
 
 `make usb-image` builds `build/saule-linux.img`: a USB stick, as one file.
 Write it to a stick (`make usb DEVICE=/dev/sdX` as root; from Windows, Rufus
-in its DD mode or balenaEtcher), and a PC with a BIOS starts from it. No
-EFI is needed or used: the netbook has none.
+in its DD mode or balenaEtcher), and a PC starts from it: by its BIOS, as
+the netbook does, or by UEFI where there is no BIOS, which is most PCs made
+since about 2012. With UEFI, **Secure Boot has to be off** in the
+firmware's settings: nobody has signed this GRUB.
 
 The stick starts the **installer** (`installer/`, a Saule program):
 
 1. **Welcome**: install, or *Try It First*, which starts Saule Linux as it
    runs from the stick and touches no disk.
-2. **Choose a disk**: every disk but the stick, with its size and what is
-   on it: empty, Windows, another Linux, Saule Linux.
+2. **Choose a disk**: every disk but the stick (SATA, NVMe, eMMC, USB),
+   with its size and what is on it: empty, Windows, another Linux, both,
+   Saule Linux. A system that no longer starts is still told for what it
+   was: its partitions say whose they are after their file systems are
+   gone, and a GPT damaged at the start of the disk is read from its copy
+   at the end.
 3. **Confirm**: said to fit the disk. An empty one is simply installed on.
    One with Windows on it says so, and asks to erase with a button Enter
    can't press. One with Saule Linux already offers to keep its files:
@@ -147,16 +153,29 @@ What it installs:
 
 ```
 sector 0          GRUB's first stage, and the partition table (MBR)
-sectors 1–2047    GRUB itself
+sectors 1–2047    GRUB itself, for a BIOS
 partition 1       SAULE-BOOT, ext2, 512 MB: the kernel, the initramfs, one
                   graphics driver pack, GRUB's configuration
 partition 2       SAULE, ext4: /data, the rest of the disk
+partition 3       GRUB for UEFI: FAT32, the last 34 MB
 ```
+
+One disk starts either kind of machine, so a disk moved from an old PC to
+a new one still starts.
 
 The system still runs from memory once installed: GRUB loads the kernel and
 the initramfs from the first partition, which is then never mounted, so no
 power cut and no program can leave a machine that doesn't start. The second
 partition is the [data disk](#storage).
+
+**After installing**, the first start asks three things, over the desktop
+they are about to change (the window manager's first-start setup): a name
+for the computer, the time zone, and the look. Each takes effect as it is
+chosen, and is kept on the data disk: `/data/system/hostname` and
+`timezone`, which init acts on as they change (`init/src/system.rs`). A PC
+that had Windows on it keeps local time in its own clock where Linux
+expects UTC; the installer notes that (`/data/system/clock`), and the time
+comes out right once a zone is chosen.
 
 **One driver pack per machine.** The stick carries every graphics driver
 pack that was built (`make drivers DRIVERS=gen3`), each as an archive the
@@ -164,7 +183,14 @@ kernel unpacks over the initramfs. The installer looks at the machine's
 graphics chip (`config/drivers.list`), copies the one pack it needs and
 names it in GRUB's configuration; the stick itself unpacks the right one
 before the installer starts, so the installer draws on the GPU too. A chip
-with no pack is drawn for on the CPU.
+with no pack is drawn for on the CPU, and a chip the kernel has no driver
+for at all (it has Intel's, and a virtual machine's) on the screen as GRUB
+left it: slower, and at the size the firmware chose, but there.
+
+Three packs are built so far: `gen3` (the netbook's GMA 3150), `intel`
+(every Intel chip from 2006's GMA X3000 to 2023's Meteor Lake) and `virtual`
+(QEMU's). `make drivers DRIVERS=intel` builds one; the stick takes every
+one that is built.
 
 The writing is done by `saule-install` (`install/`, Rust), which the
 installer runs and watches: `saule-install disks` lists what it shows, and
@@ -175,12 +201,46 @@ of code. GRUB's two files are built by `scripts/mkgrub.sh`.
 In QEMU: `make run-usb` starts the netbook from a stick, and what it
 installs on is the netbook's disk, `disks/netbook.qcow2` — or
 `DISK=build/practice.qcow2`, made empty the first time. QEMU can't take
-the stick out, so after installing, shut down and `make run-disk`. To see
+the stick out, so after installing, shut down and `make run-disk`. Both
+take `EFI=1`: the same machine with UEFI firmware (OVMF) and no BIOS. To see
 the installer's pages on a desktop without installing anything:
 `cd installer && SAULE_INSTALL=dev/fake-install saule run .`
 
 A stick's kernel options are `BOOT_OPTIONS` (default `quiet`), which the
 installed system inherits.
+
+## Sound, network and sleep
+
+The session runs as an ordinary account, which can't put the machine to
+sleep, turn the sound card's volume or bring up a network. `saule-system`
+(`system/`, Rust) runs as root beside it for that; init starts it and keeps
+it running. It is spoken to through files in `/run/saule/system`:
+
+- a file dropped in `requests/` is one request, a line of text (`sleep`,
+  `volume 40`, `mute 1`, `wifi join Home<tab>password`). Only the session's
+  account can write there;
+- `power`, `sound` and `network` say how each stands, a few lines each,
+  rewritten as they change. `cat /run/saule/system/network` shows what
+  the window manager's bar is showing.
+
+What it does:
+
+- **Sleep**: suspends to memory when asked and when the lid closes. The
+  window manager locks the screen first, so what wakes is locked.
+- **Sound**: finds the card's volume and its switch among the mixer's
+  controls and turns them, with the kernel's own requests (no ALSA
+  library but for playing). The volume chosen is kept on the data disk.
+- **A cable**: an interface with one in it is brought up and asked an
+  address for by DHCP (BusyBox's `udhcpc`, so `TOOLS=1`).
+- **Wi-Fi**: runs `wpa_supplicant` on the machine's radio and talks to it
+  over its control socket: the networks in range, joining one, the ones
+  known (kept on the data disk). The radios' firmware files and
+  `wpa_supplicant` itself are gathered by `scripts/fetch-wifi.sh`; `WIFI=0`
+  leaves them out of the image.
+
+`make NET=1 run-netbook` plugs a cable into the QEMU netbook. QEMU has no
+radio, no lid and no battery, and its default graphics card comes back
+from sleep with a blank screen (the real ones restore theirs).
 
 ## Storage
 
@@ -238,6 +298,9 @@ init/                    PID 1 (Rust)
   src/mounts.rs          /proc /sys /dev /run /tmp
   src/storage.rs         the data disk: find it, or make it, and mount /data
   src/installer.rs       started from the stick: the driver pack, unpacked
+  src/services.rs        the programs kept running beside the session
+  src/system.rs          the machine's name, time zone and clock, as chosen
+  src/zone.rs            what a time zone is right now
   src/console.rs         the real terminal behind /dev/console (for Ctrl-C)
   src/session.rs         start the session, restart it, reap orphans
   src/output.rs          what the session prints, copied to every console
@@ -254,6 +317,14 @@ install/                 saule-install (Rust): lays out a disk, puts GRUB on
   src/drivers.rs         which driver pack a graphics chip needs
   src/target.rs          installing onto this machine's disk
   src/image.rs           a stick's image, made on the build machine
+system/                  saule-system (Rust): what the session asks the
+                         machine for
+  src/requests.rs        requests, as files dropped in a folder
+  src/power.rs           sleep, and the lid
+  src/sound.rs           the volume, through the card's control device
+  src/network.rs         a cable's interface, and how every one stands
+  src/wifi.rs            wpa_supplicant, started and talked to
+  dhcp                   what udhcpc runs when it is given an address
 installer/               the installer's window, a Saule project (uikit)
   src/model/             the disks, the installation under way, the tool
   src/pages/             one view per step
@@ -275,7 +346,9 @@ scripts/
   mkoverlay.sh           pack what is unpacked over it at boot: a driver
                          pack, the installer
   stage.sh               what those two share
-  mkgrub.sh              GRUB for a BIOS, as the two files a disk boots with
+  fetch-wifi.sh          wpa_supplicant and the radios' firmware, gathered
+  mkgrub.sh              GRUB for a BIOS and for UEFI, as the files a disk
+                         boots with
   patches/               changes made to Mesa, each saying why
   check-config.sh        catch kernel options that were silently dropped
   build-drivers.sh       build the graphics driver packs (Mesa, libdrm)

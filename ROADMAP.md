@@ -35,26 +35,60 @@ Saule: the session, the window manager, the apps.
 
 ## Phase 1: a real distro 🦀
 
-The netbook has a BIOS and no EFI, so the stick and the disk boot through
-GRUB for a BIOS. Everything is developed in QEMU (`make run-netbook` dresses
+The netbook has a BIOS and no EFI; most newer PCs have UEFI and no BIOS. The
+stick and the disk it installs boot through GRUB on both. Everything is
+developed in QEMU (`make run-netbook` dresses
 QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
 
 - [x] **`make usb-image`**: a USB stick as one file, made without root: an
       MBR, GRUB, and an ext2 file system holding the kernel, the initramfs,
       the installer and the driver packs.
 - [x] **`make run-usb`**: the QEMU netbook started from that stick through
-      SeaBIOS, the way the real one will be.
+      SeaBIOS, the way the real one will be. `EFI=1`: through UEFI
+      firmware, the way a newer PC is.
+- [x] **UEFI**: GRUB for UEFI in a FAT partition of its own, on the stick
+      and on the disk. Secure Boot has to be off.
+  - [ ] signed, so that it needn't be.
 - [x] **`make usb DEVICE=…`**: write it to a stick.
 - [x] **The installer** (`installer/`, `install/`): choose a disk, see what
       is on it, install, restart. It keeps the files of a Saule Linux
       already there when asked, and gives the machine the one graphics
       driver pack its chip needs.
-  - [ ] a first start after installing: the computer's name, the time
-        zone, the look;
+  - [x] a first start after installing: the computer's name, the time
+        zone, the look (saule-wm's first-start setup, `init/src/system.rs`);
+  - [x] what was on a disk told from its partitions as well as its file
+        systems, so a system that no longer starts is still named;
+  - [ ] changing the name and the time zone later, in Settings;
+  - [ ] setting the clock by hand;
   - [ ] installing beside Windows instead of over it.
 - [ ] **On the real netbook**: nothing here has run on it yet. The stick
       booting from its BIOS, the `gen3` driver pack on its GMA 3150 (built
       without LLVM: `scripts/patches/`), the touchpad.
+- [ ] **Other machines**: none has been tried on either. What is there for
+      them, all of it unproven on the hardware it is for:
+  - [x] the `intel` driver pack, for every Intel chip from Gen4 to Meteor
+        Lake. Built from Mesa 24.0, the last whose Intel drivers build
+        without an OpenCL compiler (`scripts/build-drivers.sh`); the chips
+        after need the newer Mesa and that compiler;
+  - [x] a newer laptop's touchpad: HID over I2C, with the chipset drivers
+        under it for Intel from Bay Trail to Meteor Lake and for AMD.
+        Shine makes the gestures: two fingers scroll, a tap clicks, two
+        fingers click the secondary button;
+  - [x] processors that run cool: frequency scaling and idle states, and
+        the firmware's thermal limits;
+  - [ ] the firmware files newer Intel graphics load for their deeper
+        power states (i915 works without them, and warns);
+  - [ ] kernel drivers for AMD and NVIDIA graphics (they get the screen as
+        GRUB left it, drawn on the CPU);
+  - [x] sleep, from the menu and by the lid; the battery's level; sound
+        and its volume; a cable's network; Wi-Fi with Intel's and
+        Atheros's radios (`system/`, and the window manager's bar). Of
+        these only sleep, the volume and a cable have run anywhere, in
+        QEMU;
+  - [ ] the keys for volume and brightness, and the screen's brightness;
+  - [ ] Wi-Fi radios other than those (Broadcom's, Realtek's, MediaTek's),
+        and the firmware as a pack the installer chooses, as the graphics
+        drivers are.
 - [x] **Persistent storage**: init mounts a data disk at `/data` (an ext
       file system labelled `SAULE`; an internal disk that is completely
       empty is partitioned and formatted for it, one with anything on it is
@@ -64,7 +98,7 @@ QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
       (`disks/netbook.qcow2`, kept between runs).
   - [x] safe against a power cut: ext4 with a journal, `e2fsck` before
         mounting, synchronous writes, and caches kept in memory;
-  - [ ] NVMe and virtio-blk, for other machines.
+  - [x] NVMe, eMMC and virtio-blk, for other machines.
 - [ ] **Logs**:
   - init's messages go to `/dev/kmsg`, so they show in `dmesg`;
   - the session's stderr is kept in `/run/session.log`.
@@ -76,12 +110,14 @@ QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
       System names the card (PCI ids, `pci.ids` where there is one).
       Its driver pack, `gen3`, is built (`make drivers DRIVERS=gen3`): Mesa's
       i915 without LLVM, which would be 100 MB in a machine with 1 GB
-      (`scripts/patches/mesa-i915-without-llvm.patch`). In QEMU the pack
+      (`scripts/patches/mesa-26.0.8-i915-without-llvm.patch`). In QEMU the pack
       loads and draws through its software driver; the chip's own driver
       first runs on the chip.
 - [x] **The clock**: the kernel reads the PC's clock when it starts, so
       `Os.date()` is right, in UTC.
-  - [ ] a time zone.
+  - [x] a time zone, chosen at the first start. Saule's `Os.date` is UTC
+        only: init says what the zone is at present (`/run/saule/time`) and
+        the window manager's clock adds it.
 - [ ] **No glibc in the image**: needs the static musl runner (phase 2).
 
 ## Phase 2: `saule build` 🦀 (in ~/saule) — first version ✅
