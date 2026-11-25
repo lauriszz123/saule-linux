@@ -32,19 +32,51 @@ add_program() {
 # pack, symlinks as they are, and what they load from the host (libstdc++,
 # zlib). Stripped: Mesa's symbols are most of its size, and nothing here
 # reads them.
+#
+# Where the drivers themselves are depends on the Mesa the pack was built
+# from: one libgallium and a loader for it in gbm/, or (before Mesa 25) one
+# file in dri/ under each driver's name.
 add_drivers() {
-    local pack=$1 lib=usr/lib/x86_64-linux-gnu library
+    local pack=$1 lib=usr/lib/x86_64-linux-gnu library folder
 
     for library in "$pack/$lib"/*.so.* "$pack/$lib"/libgallium*.so \
-        "$pack/$lib"/gbm/*.so; do
+        "$pack/$lib"/gbm/*.so "$pack/$lib"/dri/*.so; do
+        [ -e "$library" ] || continue
         [ -L "$library" ] || add_libraries "$library"
     done
-    mkdir -p "$STAGE/$lib/gbm"
-    cp -a "$pack/$lib"/*.so.* "$pack/$lib"/libgallium*.so "$STAGE/$lib/"
-    cp -a "$pack/$lib/gbm/." "$STAGE/$lib/gbm/"
+
+    mkdir -p "$STAGE/$lib"
+    cp -a "$pack/$lib"/*.so.* "$STAGE/$lib/"
+    for library in "$pack/$lib"/libgallium*.so; do
+        [ -e "$library" ] && cp -a "$library" "$STAGE/$lib/"
+    done
+    for folder in gbm dri; do
+        [ -d "$pack/$lib/$folder" ] || continue
+        mkdir -p "$STAGE/$lib/$folder"
+        cp -a "$pack/$lib/$folder/." "$STAGE/$lib/$folder/"
+    done
+
+    # dri/'s names are hard links to one file, which a cpio archive made
+    # from a list would hold once per name: one of them stays the file and
+    # the others become links to it.
+    if [ -d "$STAGE/$lib/dri" ]; then
+        local -A first=()
+        local inode
+        for library in "$STAGE/$lib/dri"/*.so; do
+            [ -L "$library" ] && continue
+            inode=$(stat -c '%i' "$library")
+            if [ -n "${first[$inode]:-}" ]; then
+                ln -sf "${first[$inode]}" "$library"
+            else
+                first[$inode]=$(basename "$library")
+            fi
+        done
+    fi
+
     find "$STAGE/$lib" -maxdepth 2 -type f \( -name 'libgallium*' -o -name 'libEGL*' \
         -o -name 'libGLESv2*' -o -name 'libgbm*' -o -name 'libdrm*' -o -name 'dri_gbm*' \
-        -o -name 'libpciaccess*' \) -exec strip --strip-unneeded {} +
+        -o -name '*_dri.so' -o -name 'libglapi*' -o -name 'libpciaccess*' \) \
+        -exec strip --strip-unneeded {} +
 }
 
 # Pack the tree as $1, gzipped, with root as the owner of every file. Any

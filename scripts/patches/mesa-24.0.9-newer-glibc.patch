@@ -1,0 +1,39 @@
+Build with a C library that has C23's once_flag.
+
+glibc 2.42 declares `once_flag` and `call_once` itself, in <stdlib.h>, as
+C23 asks. Mesa 24.0 defines both in its own C11 threads emulation, and the
+two definitions clash on a build machine with a current glibc. This is
+Mesa's own later fix (it is in every release since), brought back: where
+the C library has them, Mesa leaves them alone.
+
+diff -ru a/src/c11/impl/threads_posix.c b/src/c11/impl/threads_posix.c
+--- a/src/c11/impl/threads_posix.c	2026-11-25 14:28:44.573445758 +0200
++++ b/src/c11/impl/threads_posix.c	2026-11-25 14:28:44.581596903 +0200
+@@ -70,11 +70,13 @@
+ 
+ /*--------------- 7.25.2 Initialization functions ---------------*/
+ // 7.25.2.1
++#ifndef __once_flag_defined
+ void
+ call_once(once_flag *flag, void (*func)(void))
+ {
+     pthread_once(flag, func);
+ }
++#endif
+ 
+ 
+ /*------------- 7.25.3 Condition variable functions -------------*/
+diff -ru a/src/c11/threads.h b/src/c11/threads.h
+--- a/src/c11/threads.h	2026-11-25 14:28:44.572466711 +0200
++++ b/src/c11/threads.h	2026-11-25 14:28:44.581501151 +0200
+@@ -118,8 +118,10 @@
+ typedef pthread_t       thrd_t;
+ typedef pthread_key_t   tss_t;
+ typedef pthread_mutex_t mtx_t;
++#ifndef __once_flag_defined
+ typedef pthread_once_t  once_flag;
+ #  define ONCE_FLAG_INIT PTHREAD_ONCE_INIT
++#endif
+ #  ifdef PTHREAD_DESTRUCTOR_ITERATIONS
+ #    define TSS_DTOR_ITERATIONS PTHREAD_DESTRUCTOR_ITERATIONS
+ #  else

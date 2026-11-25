@@ -9,8 +9,9 @@
 # chip and installs that pack (see config/drivers.list for which chip is which).
 #
 #   gen3       i915: Intel Gen3, the netbook's GMA 3150 (GLES 2 only),
-#              without LLVM (scripts/patches/mesa-i915-without-llvm.patch)
-#   intel      crocus, iris: Intel Gen4 to now
+#              without LLVM (scripts/patches/mesa-26.0.8-i915-without-llvm.patch)
+#   intel      crocus, iris: Intel Gen4 (GMA X3000) to Meteor Lake, from
+#              Mesa 24.0: see MESA_FOR below
 #   amd        r300, r600, radeonsi: ATI/AMD Radeon, radeonsi with ACO
 #              rather than LLVM, which alone would add ~100 MB
 #   nvidia     nouveau: NVIDIA, the open driver
@@ -41,7 +42,22 @@ LIBPCIACCESS_SHA256=4af43444b38adb5545d0ed1c2ce46d9608cc47b31c2387fc5181656765a6
 LIBDRM_VERSION=2.4.131
 LIBDRM_SHA256=45ba9983b51c896406a3d654de81d313b953b76e6391e2797073d543c5f617d5
 MESA_VERSION=26.0.8
-MESA_SHA256=caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc
+
+# A pack built from another Mesa than that one.
+#
+# intel: since 24.1 Mesa's Intel drivers come with shaders written in OpenCL
+# C, compiled as Mesa is built, by a compiler that is itself built on LLVM
+# and Clang: a gigabyte of build tools for a program the pack then has no
+# use for. 24.0 is the last release without them. It knows every Intel chip
+# up to Meteor Lake (2023); the ones after need the newer Mesa and the tools.
+declare -A MESA_FOR=(
+    [intel]=24.0.9
+)
+
+declare -A MESA_SHA256=(
+    [26.0.8]=caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc
+    [24.0.9]=51aa686ca4060e38711a9e8f60c8f1efaa516baf411946ed7f2c265cd582ca4c
+)
 
 # Each pack's gallium drivers.
 declare -A PACKS=(
@@ -95,12 +111,21 @@ fetch() {
 
 fetch "https://www.x.org/releases/individual/lib/libpciaccess-$LIBPCIACCESS_VERSION.tar.xz" "$LIBPCIACCESS_SHA256"
 fetch "https://dri.freedesktop.org/libdrm/libdrm-$LIBDRM_VERSION.tar.xz" "$LIBDRM_SHA256"
-fetch "https://archive.mesa3d.org/mesa-$MESA_VERSION.tar.xz" "$MESA_SHA256"
 
-# What is changed in Mesa, and why, is at the top of each patch. The source
-# was unpacked afresh just now, so each applies to it as it was released.
-for change in "$patches"/mesa-*.patch; do
-    patch -d "$src/mesa-$MESA_VERSION" -p1 --quiet < "$change"
+# Each Mesa a wanted pack is built from, once. What is changed in one, and
+# why, is at the top of each patch for it (patches/mesa-VERSION-*.patch).
+# The source was unpacked afresh just now, so each applies to it as it was
+# released.
+declare -A fetched=()
+for pack in "${wanted[@]}"; do
+    version=${MESA_FOR[$pack]:-$MESA_VERSION}
+    [ -z "${fetched[$version]:-}" ] || continue
+    fetched[$version]=1
+    fetch "https://archive.mesa3d.org/mesa-$version.tar.xz" "${MESA_SHA256[$version]}"
+    for change in "$patches"/mesa-"$version"-*.patch; do
+        [ -e "$change" ] || continue
+        patch -d "$src/mesa-$version" -p1 --quiet < "$change"
+    done
 done
 
 # What is built is found by the next thing built through copies of its
@@ -141,13 +166,25 @@ for pack in "${wanted[@]}"; do
     rm -rf "$root"
     cp -a "$libdrm_root" "$root"
 
-    PKG_CONFIG_PATH=$pc meson setup --wipe "$out/mesa-build-$pack" "$src/mesa-$MESA_VERSION" \
+    version=${MESA_FOR[$pack]:-$MESA_VERSION}
+    drivers=${PACKS[$pack]}
+    # What the releases call differently: 24.0 has softpipe under the name
+    # of the software drivers together, and its glvnd is a yes or no.
+    case $version in
+        24.0.*)
+            drivers=${drivers//softpipe/swrast}
+            differing=(-Dglvnd=false) ;;
+        *)
+            differing=(-Dglvnd=disabled -Damd-use-llvm=false) ;;
+    esac
+
+    PKG_CONFIG_PATH=$pc meson setup --wipe "$out/mesa-build-$pack" "$src/mesa-$version" \
         --prefix=/usr --libdir="$libdir" --buildtype=release -Db_ndebug=true \
         -Dplatforms= -Degl-native-platform=drm \
         -Degl=enabled -Dgbm=enabled -Dgles1=disabled -Dgles2=enabled \
-        -Dopengl=true -Dglx=disabled -Dglvnd=disabled \
-        -Dgallium-drivers="${PACKS[$pack]}" -Dvulkan-drivers= \
-        -Dllvm=disabled -Damd-use-llvm=false \
+        -Dopengl=true -Dglx=disabled "${differing[@]}" \
+        -Dgallium-drivers="$drivers" -Dvulkan-drivers= \
+        -Dllvm=disabled \
         -Dgallium-va=disabled -Dvideo-codecs= \
         -Dxmlconfig=disabled -Dexpat=disabled \
         -Dlmsensors=disabled -Dlibunwind=disabled -Dvalgrind=disabled \
@@ -155,5 +192,5 @@ for pack in "${wanted[@]}"; do
     ninja -C "$out/mesa-build-$pack"
     DESTDIR="$root" ninja -C "$out/mesa-build-$pack" install
     rm -rf "$root/usr/share/man" "$root/usr/share/doc"
-    echo "drivers: $pack in $root ($(du -sh "$root/usr/$libdir" | cut -f1))"
+    echo "drivers: $pack in $root (Mesa $version, $(du -sh "$root/usr/$libdir" | cut -f1))"
 done
