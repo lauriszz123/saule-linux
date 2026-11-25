@@ -48,6 +48,11 @@
 #                  /usr/share/zoneinfo), installed at the same path: what
 #                  init tells a zone's time by, and the list of zones the
 #                  first-start setup offers
+#   INSTALL_TOOL   optional: saule-install (../install), installed as
+#                  /sbin/saule-install: an installed system applies
+#                  updates with it
+#   VERSION        optional: the system's version, written to
+#                  /etc/saule-release: what Settings says is running
 #   BLUETOOTH      optional: a directory holding BlueZ, a D-Bus daemon
 #                  for it and Intel's radios' firmware
 #                  (scripts/fetch-bluetooth.sh), laid out as they are
@@ -120,6 +125,15 @@ fi
 if [ -n "${SYSTEM:-}" ] && [ -f "$SYSTEM" ]; then
     add_program "$SYSTEM" /sbin/saule-system
     install -D -m 0755 "$(dirname "$0")/../system/dhcp" "$STAGE/usr/share/saule/dhcp"
+fi
+
+# What applies an update, and which version this is.
+if [ -n "${INSTALL_TOOL:-}" ] && [ -f "$INSTALL_TOOL" ]; then
+    add_program "$INSTALL_TOOL" /sbin/saule-install
+fi
+if [ -n "${VERSION:-}" ]; then
+    mkdir -p "$STAGE/etc"
+    echo "$VERSION" >"$STAGE/etc/saule-release"
 fi
 
 # Wi-Fi: wpa_supplicant with the libraries it loads, and the firmware files.

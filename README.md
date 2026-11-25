@@ -62,6 +62,7 @@ Then:
 | `make usb DEVICE=/dev/sdX` | write that image to a stick (as root; the stick is erased) |
 | `make run-usb` | the QEMU netbook started from the stick, into the installer. `DISK=file.qcow2` gives it a disk to practise on instead of `disks/netbook.qcow2` |
 | `make run-disk` | the QEMU netbook started from its hard disk alone: what the installer put there |
+| `make update` | a signed update file for systems already installed (see [Updating](#updating)) |
 | `make test` | run the tests of init, the installer tool, the system service and the password crate |
 | `make menuconfig` | change kernel options; copy the keepers into `config/kernel.config` |
 | `make check-config` | list options `config/kernel.config` asked for but didn't get |
@@ -226,6 +227,27 @@ the installer's pages on a desktop without installing anything:
 
 A stick's kernel options are `BOOT_OPTIONS` (default `quiet`), which the
 installed system inherits.
+
+## Updating
+
+An installed system is updated from a file, `saule-linux-<version>.update`:
+the kernel, the initramfs and the driver packs, as the stick carries them,
+with a signature at its end. `make update` makes one (after `make
+update-key`, once, has made the key it is signed with: the private half in
+`keys/`, which is not in the repository and wants keeping safe, and the
+public half in `config/update.pub`, which is built into `saule-install`).
+
+Put on a USB drive, or in Downloads, the file is found by Settings
+(General, Software Update), which shows the version running and the one
+offered. Installing it asks `saule-system`, which runs `saule-install
+update`: the file is checked against the key before anything is written,
+the new files are written beside the old ones in the system's partition
+and flushed, and then renamed over them, so a power cut leaves the old
+system or the new. The computer starts the new one the next time it
+starts. What is kept on the data disk is not touched, and the kernel
+options the machine starts with stay as they are.
+
+There is nowhere updates are downloaded from yet: the file is carried.
 
 ## Logging in
 
@@ -409,6 +431,7 @@ install/                 saule-install (Rust): lays out a disk, puts GRUB on
   src/disks.rs           the machine's disks, and what is on each
   src/drivers.rs         which driver pack a graphics chip needs
   src/target.rs          installing onto this machine's disk
+  src/update.rs          an update file: made, checked, applied
   src/answers.rs         what the installer was told, put on the data disk
   src/image.rs           a stick's image, made on the build machine
 password/                how a password is kept (Rust): made by
@@ -422,6 +445,7 @@ system/                  saule-system (Rust): what the session asks the
   src/disks.rs           drives plugged in: mounted, and let go of
   src/clock.rs           the time, from a time server
   src/bluetooth.rs       BlueZ, started and asked
+  src/update.rs          an update file installed when asked
   src/login.rs           the person's name; checking and changing the
                          password
   src/network.rs         a cable's interface, and how every one stands

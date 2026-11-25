@@ -86,6 +86,15 @@ TARBALL   := $(BUILD)/downloads/linux-$(KERNEL_VERSION).tar.xz
 INSTALLER    := $(BUILD)/installer
 INSTALL_TOOL := install/target/x86_64-unknown-linux-musl/release/saule-install
 INSTALL_HOST := install/target/release/saule-install
+# The system's version: the day and minute it was built, unless said.
+# What an update file says it is, and what Settings says is running. Not
+# called VERSION: that is the kernel's own, and a variable given on the
+# command line reaches the kernel's build too.
+SYSTEM_VERSION ?= $(shell date +%Y.%m.%d.%H%M)
+# The key update files are signed with (`make update-key` makes one; its
+# public half is config/update.pub, built into saule-install), and the
+# update file `make update` makes.
+UPDATE_KEY ?= keys/update.key
 
 # The USB stick: what goes on it is put together in build/usb, and the stick
 # itself is one file, USB_IMAGE.
@@ -290,7 +299,7 @@ initramfs: init session apps $(GEN_CPIO)
 	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" DRIVERS_DIR="$(DRIVERS_DIR)" \
 	FS_TOOLS="$(FS_TOOLS)" ZONEINFO="$(ZONEINFO)" \
 	SYSTEM="$(SYSTEM)" WIFI="$(WIFI_DIR)" ALSA="$(ALSA)" XKB="$(XKB)" \
-	BLUETOOTH="$(BLUETOOTH_DIR)" \
+	BLUETOOTH="$(BLUETOOTH_DIR)" INSTALL_TOOL="$(INSTALL_TOOL)" VERSION="$(SYSTEM_VERSION)" \
 	WALLPAPERS="$(wildcard $(WM)/wallpapers)" scripts/mkinitramfs.sh $(INITRAMFS)
 
 # ---------------------------------------------------------------------------
@@ -334,6 +343,19 @@ usb-image: kernel installer $(GEN_CPIO)
 	echo "$(BOOT_OPTIONS)" > $(USB)/root/cmdline
 	$(INSTALL_HOST) config "$(BOOT_OPTIONS) saule.installer=1" /installer.cpio.gz > $(USB)/root/grub/grub.cfg
 	$(INSTALL_HOST) image $(USB_IMAGE) $(USB)/root --efi $(USB)/efi.img
+
+# An update file for systems already installed: the same kernel,
+# initramfs and driver packs as the stick, signed. Settings finds it on a
+# drive that is plugged in or in Downloads, and installs it. Named for
+# the version the image inside it says it is.
+update: usb-image
+	@test -f $(UPDATE_KEY) || { echo "no signing key at $(UPDATE_KEY): make update-key makes one"; exit 1; }
+	scripts/mkupdate.sh $(INSTALL_HOST) $(USB)/root $(UPDATE_KEY) $(BUILD)
+
+update-key:
+	cd install && cargo build --release
+	$(INSTALL_HOST) keygen $(UPDATE_KEY) config/update.pub
+	@echo "the private key is $(UPDATE_KEY): keep a copy somewhere safe, it is not in the repository"
 
 # Write the image to a stick. The whole device (/dev/sdb, not /dev/sdb1),
 # and as root; WSL does not see USB sticks at all, so from Windows write

@@ -74,6 +74,14 @@ QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
   - [x] the clock set from a time server once there is a network
         (`system/src/clock.rs`);
   - [ ] setting the clock by hand;
+  - [x] updating an installed system from a signed file, found by
+        Settings on a drive or in Downloads (`install/src/update.rs`,
+        `make update`);
+  - [ ] somewhere updates are downloaded from, and being told there is
+        one;
+  - [x] the size of everything chosen in Settings, or by the screen's
+        resolution (Shine's `Window.setScale`; apps drawn at the same
+        scale, pixel for pixel);
   - [ ] installing beside Windows instead of over it.
 - [ ] **On the real netbook**: nothing here has run on it yet. The stick
       booting from its BIOS, the `gen3` driver pack on its GMA 3150 (built
