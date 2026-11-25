@@ -17,6 +17,16 @@
 //!       make the image OUT of a stick holding the folder ROOT, with the
 //!       file system IMAGE as its partition for UEFI. Needs only `mke2fs`.
 //!
+//!   saule-install update FILE
+//!       replace the installed system with the one in the update FILE, if
+//!       it is signed with the key this was built with (`update.rs`).
+//!       `update-version FILE` checks one and prints its version.
+//!
+//!   saule-install bundle OUT ROOT --key KEY --version VERSION
+//!       make the update file OUT from the folder ROOT, laid out as the
+//!       stick is, signed with the private key in KEY. `keygen PRIVATE
+//!       PUBLIC` makes a key.
+//!
 //!   saule-install live-drivers
 //!       unpack the graphics driver pack this machine's chip needs over
 //!       the running system, from the stick. Init runs it before the
@@ -39,6 +49,7 @@ mod image;
 mod layout;
 mod sys;
 mod target;
+mod update;
 
 use std::io::Read;
 use std::path::Path;
@@ -57,6 +68,12 @@ fn main() -> ExitCode {
         }
         ["install", disk, options @ ..] => install(disk, options),
         ["image", out, root, options @ ..] => image(out, root, options),
+        ["update", file] => update::apply(Path::new(file)),
+        ["update-version", file] => update::version_of(Path::new(file)).map(|v| println!("{v}")),
+        ["bundle", out, root, "--key", key, "--version", version] => {
+            update::bundle(Path::new(out), Path::new(root), Path::new(key), version)
+        }
+        ["keygen", private, public] => update::keygen(Path::new(private), Path::new(public)),
         ["live-drivers"] => target::live_drivers(),
         ["config", options, overlays @ ..] => {
             let overlays: Vec<String> = overlays.iter().map(|o| o.to_string()).collect();
@@ -78,6 +95,9 @@ fn main() -> ExitCode {
                 "       saule-install install DISK [--keep-data] [--answers FILE] [--from FOLDER]"
             );
             eprintln!("       saule-install image OUT ROOT --efi IMAGE [--megabytes N]");
+            eprintln!("       saule-install update FILE");
+            eprintln!("       saule-install bundle OUT ROOT --key KEY --version VERSION");
+            eprintln!("       saule-install keygen PRIVATE PUBLIC");
             eprintln!("       saule-install live-drivers");
             eprintln!("       saule-install config OPTIONS [OVERLAY...]");
             eprintln!("       saule-install driver < drivers.list");

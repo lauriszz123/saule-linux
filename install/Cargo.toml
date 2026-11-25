@@ -6,8 +6,10 @@ description = "Puts Saule Linux on a disk: the installer's hands, and what build
 publish = false
 
 [dependencies]
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "digest"] }
 libc = "0.2"
 saule-password = { path = "../password" }
+sha2 = "0.10"
 
 [profile.release]
 opt-level = "s"
