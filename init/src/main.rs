@@ -5,10 +5,13 @@
 //! 1. mount the kernel's file systems (`/proc`, `/sys`, `/dev`, …);
 //! 2. give the machine its name and print the banner, and mount the data
 //!    disk at `/data`, where what the session saves is kept across a
-//!    reboot (`storage.rs`);
+//!    reboot (`storage.rs`), and with it the name and time zone the person
+//!    chose for the machine (`system.rs`);
 //! 3. start the **session** — `/bin/session`, a Saule program built with
 //!    `saule build` — as the unprivileged `display` account, with the screen
 //!    and input devices handed to it (`seat.rs`), and keep it going;
+//!    and beside it the programs that do what it may ask for but not do
+//!    itself (`services.rs`);
 //! 4. reap every orphaned process (PID 1 inherits them all);
 //! 5. power off or reboot cleanly when asked.
 //!
@@ -35,12 +38,23 @@ mod mounts;
 mod output;
 mod power;
 mod seat;
+mod services;
 mod session;
 mod storage;
+mod system;
+mod zone;
 
 use cmdline::Cmdline;
 
 fn main() {
+    // A second copy of init, asked what a time zone is: see `zone.rs`.
+    let args: Vec<String> = std::env::args().collect();
+    if let [_, mode, name, at] = args.as_slice() {
+        if mode == "zone" {
+            zone::answer(name, at);
+        }
+    }
+
     if std::process::id() != 1 {
         eprintln!("saule-init: this is the system's first process and must run as PID 1");
         std::process::exit(1);
@@ -60,7 +74,17 @@ fn main() {
         installer::prepare();
     } else {
         storage::mount_data();
+        system::start();
     }
+
+    // From the stick the session is the installer's, as root; what is
+    // tried from there afterwards is the ordinary account's.
+    let account = if cmdline.installer {
+        cmdline::USER
+    } else {
+        cmdline.user.as_str()
+    };
+    services::start(account);
 
     session::supervise(&cmdline);
 }

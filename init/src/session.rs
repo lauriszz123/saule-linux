@@ -21,7 +21,7 @@ use crate::account::{self, Account, Switch};
 use crate::cmdline::{self, Cmdline, OnExit};
 use crate::output::Output;
 use crate::power::{self, Request};
-use crate::{console, log, storage};
+use crate::{console, log, storage, system};
 
 const SHELL: &str = "/bin/sh";
 
@@ -142,6 +142,7 @@ fn session_account(name: &str) -> std::io::Result<Account> {
     if !account.is_root() {
         account.prepare()?;
         lend_terminals(&account);
+        system::lend_to(&account);
     }
 
     Ok(account)
@@ -263,6 +264,11 @@ fn command_for(
     }
     if storage::mounted() {
         command.env("SAULE_DATA", storage::MOUNT);
+    }
+    // For programs that ask the C library for local time. Saule's own
+    // `Os.date` doesn't: see `system.rs`.
+    if let Some(zone) = system::zone() {
+        command.env("TZ", zone);
     }
     // With the home on the data disk, caches stay behind in memory. A cache
     // is rebuilt when it is missing, but one a power cut left half-written

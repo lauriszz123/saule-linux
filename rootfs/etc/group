@@ -2,4 +2,5 @@ root:x:0:
 tty:x:5:display
 video:x:44:display
 input:x:45:display
+audio:x:29:display
 display:x:100:

@@ -6,6 +6,7 @@
 //!
 //!   /dev/dri/*, /dev/fb*          → `video`  (drawing on the screen)
 //!   /dev/input/event*, mice, …    → `input`  (keyboard, mouse, touchpad)
+//!   /dev/snd/*                    → `audio`  (playing sound)
 //!
 //! and the account in those groups (`display`) can open them. Devices that
 //! appear later — a USB mouse plugged in — are fixed as the kernel announces
@@ -35,6 +36,10 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "input/",
         group: "input",
+    },
+    Rule {
+        prefix: "snd/",
+        group: "audio",
     },
 ];
 
@@ -203,6 +208,7 @@ mod tests {
         assert_eq!(group("dri/card0"), Some("video"));
         assert_eq!(group("fb0"), Some("video"));
         assert_eq!(group("input/event2"), Some("input"));
+        assert_eq!(group("snd/pcmC0D0p"), Some("audio"));
         assert_eq!(group("tty1"), None);
     }
 }
