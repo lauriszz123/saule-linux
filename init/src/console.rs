@@ -8,7 +8,7 @@
 use std::ffi::CString;
 
 /// Point init's stdin/stdout/stderr at the console, in case the kernel
-/// started us without one (no `/dev/console` in the initramfs).
+/// started init without one (no `/dev/console` in the initramfs).
 pub fn attach() {
     if let Some(fd) = open("/dev/console") {
         redirect(fd);

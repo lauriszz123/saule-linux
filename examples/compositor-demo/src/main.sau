@@ -3,7 +3,7 @@ A test display server for Shine's `Compositor` — not the window manager.
 
 It puts every window side by side, sends keys to the focused one and the
 mouse to the one under it, and draws a title bar over each. Enough to see
-that apps run inside it unchanged; the real window manager is yours.
+that apps run inside it unchanged; the real window manager is saule-wm.
 
   saule run examples/compositor-demo [app …]   starts each app inside it
 On Saule Linux it starts everything in /bin/apps. Ctrl-Alt-Q quits.
