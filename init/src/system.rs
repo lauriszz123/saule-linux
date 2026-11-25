@@ -76,6 +76,13 @@ pub fn lend_to(account: &Account) {
     if storage::mounted() && folder.is_dir() && !account.is_root() {
         let _ = account::chown(folder, account.uid, account.gid);
         let _ = account::chmod(folder, 0o755);
+        // And what the installer left in it (the keyboard's layout), which
+        // is root's as the installer wrote it.
+        for entry in fs::read_dir(folder).into_iter().flatten().flatten() {
+            if entry.file_type().is_ok_and(|kind| kind.is_file()) {
+                let _ = account::chown(&entry.path(), account.uid, account.gid);
+            }
+        }
     }
 }
 
@@ -104,15 +111,39 @@ fn apply() {
     }
 
     let zone = zone().unwrap_or_else(|| "UTC".to_string());
-    let local = read("clock").as_deref() == Some("local");
+    let note = read("clock");
+    let local = note.as_deref() == Some("local");
+    // `synced`: the clock was set from a time server, and the PC's own
+    // clock with it, in UTC (saule-system's `clock.rs`). It is right as
+    // it stands: whatever was added for a clock kept in local time is no
+    // longer owed, and nothing is to be moved.
+    if note.as_deref() == Some("synced") {
+        applied.correction = 0;
+    }
+
+    // What the zone is could not be found out (it was a moment ago, when
+    // it was chosen from the list of them): nothing about the time is
+    // touched, rather than the clock set by a guess.
+    let ask = |at: i64| -> Option<Offset> {
+        if zone == "UTC" {
+            Some(Offset::default())
+        } else {
+            zone::ask(&zone, at)
+        }
+    };
 
     // The clock as the kernel read it: with any earlier correction undone.
     let read_as_utc = now() + applied.correction;
     let correction = if local {
         // The PC's clock shows the zone's time. Which instant that is
         // depends on the zone's offset then, found from a first guess.
-        let guess = zone::ask(&zone, read_as_utc).map_or(0, |o| o.seconds);
-        zone::ask(&zone, read_as_utc - guess).map_or(guess, |o| o.seconds)
+        let Some(guess) = ask(read_as_utc) else {
+            return;
+        };
+        let Some(then) = ask(read_as_utc - guess.seconds) else {
+            return;
+        };
+        then.seconds
     } else {
         0
     };
@@ -120,7 +151,9 @@ fn apply() {
         applied.correction = correction;
     }
 
-    let offset = zone::ask(&zone, now()).unwrap_or_default();
+    let Some(offset) = ask(now()) else {
+        return;
+    };
     write_time(&zone, offset);
     if zone != applied.zone {
         log::info(&format!(
@@ -147,6 +180,32 @@ fn host_name(name: &str) -> Option<String> {
     let out: String = out.chars().take(63).collect();
     let out = out.trim_end_matches('-').to_string();
     (!out.is_empty()).then_some(out)
+}
+
+/// What the firmware calls the machine (DMI's product name), as a host
+/// name; `None` where it says nothing, or one of the things a board says
+/// when its maker never filled the name in.
+pub fn model_name() -> Option<String> {
+    let product = fs::read_to_string("/sys/class/dmi/id/product_name").ok()?;
+    model_from(&product)
+}
+
+fn model_from(product: &str) -> Option<String> {
+    const NOTHING: [&str; 8] = [
+        "o.e.m",
+        "system product name",
+        "system name",
+        "default string",
+        "not specified",
+        "not applicable",
+        "unknown",
+        "none",
+    ];
+    let said = product.trim().to_lowercase();
+    if said.is_empty() || NOTHING.iter().any(|nothing| said.contains(nothing)) {
+        return None;
+    }
+    host_name(product)
 }
 
 fn set_hostname(name: &str) -> bool {
@@ -230,6 +289,27 @@ fn watch() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_machine_is_called_after_what_it_is() {
+        assert_eq!(
+            model_from("Inspiron 7559\n").as_deref(),
+            Some("Inspiron-7559")
+        );
+        assert_eq!(
+            model_from("HP Mini 210-1000").as_deref(),
+            Some("HP-Mini-210-1000")
+        );
+        assert_eq!(
+            model_from("Standard PC (Q35 + ICH9, 2009)").as_deref(),
+            Some("Standard-PC-Q35-ICH9-2009")
+        );
+        // What a board says when nobody named it is no name.
+        assert_eq!(model_from("To Be Filled By O.E.M."), None);
+        assert_eq!(model_from("System Product Name"), None);
+        assert_eq!(model_from("Default string"), None);
+        assert_eq!(model_from("  "), None);
+    }
 
     #[test]
     fn a_name_as_typed_becomes_a_host_name() {

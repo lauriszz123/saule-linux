@@ -36,6 +36,7 @@ mod installer;
 mod log;
 mod mounts;
 mod output;
+mod person;
 mod power;
 mod seat;
 mod services;
@@ -65,7 +66,7 @@ fn main() {
     power::install_signal_handlers();
     seat::start();
 
-    let cmdline = Cmdline::read();
+    let mut cmdline = Cmdline::read();
     set_hostname();
     log::banner();
     // From the stick, the disks are the installer's to decide about: a
@@ -75,6 +76,11 @@ fn main() {
     } else {
         storage::mount_data();
         system::start();
+        // The session's account is called after whoever the machine is
+        // for, before anything looks it up by name.
+        if cmdline.user == cmdline::USER {
+            cmdline.user = person::adopt(cmdline::USER);
+        }
     }
 
     // From the stick the session is the installer's, as root; what is
@@ -89,16 +95,20 @@ fn main() {
     session::supervise(&cmdline);
 }
 
-/// Name the machine from `/etc/hostname`; the kernel default stays otherwise.
+/// Name the machine until somebody names it: after what it is, as its
+/// maker's firmware says (an "Inspiron 7559" is `Inspiron-7559`), so that
+/// the first-start setup offers the computer's own name to keep or change.
+/// A machine whose firmware says nothing of use is called what
+/// `/etc/hostname` says; without that the kernel's default stays.
 fn set_hostname() {
-    let Ok(name) = std::fs::read_to_string("/etc/hostname") else {
+    let name = system::model_name().or_else(|| {
+        let name = std::fs::read_to_string("/etc/hostname").ok()?;
+        let name = name.trim();
+        (!name.is_empty()).then(|| name.to_string())
+    });
+    let Some(name) = name else {
         return;
     };
-
-    let name = name.trim();
-    if name.is_empty() {
-        return;
-    }
 
     // SAFETY: the pointer and length describe `name`, which outlives the call.
     let result = unsafe { libc::sethostname(name.as_ptr().cast(), name.len()) };

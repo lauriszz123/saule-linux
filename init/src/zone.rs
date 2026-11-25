@@ -7,6 +7,7 @@
 //! (`/init zone NAME SECONDS`), which sets `TZ`, answers on its standard
 //! output and ends. [`answer`] is that copy; [`ask`] starts it.
 
+use std::io::Read;
 use std::process::{Command, Stdio};
 
 /// What a zone is at some instant: how far ahead of UTC, in seconds, and
@@ -43,13 +44,24 @@ pub fn ask(name: &str, at: i64) -> Option<Offset> {
     if !known(name) {
         return None;
     }
-    let output = Command::new("/init")
+    let mut child = Command::new("/init")
         .args(["zone", name, &at.to_string()])
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
+        .spawn()
         .ok()?;
-    parse(&String::from_utf8_lossy(&output.stdout))
+
+    // Its answer is read from the pipe, which is whole when the copy has
+    // ended. Not `Command::output`, which also waits for the process and
+    // fails when it is already gone: init's own loop reaps every process
+    // that ends, this one too, and often gets there first. An answer lost
+    // that way read as "no distance from UTC", and the clock jumped by the
+    // zone's two hours and back whenever anything in the folder changed.
+    let mut answer = String::new();
+    child.stdout.take()?.read_to_string(&mut answer).ok()?;
+    let _ = child.wait();
+    parse(&answer)
 }
 
 fn parse(text: &str) -> Option<Offset> {
