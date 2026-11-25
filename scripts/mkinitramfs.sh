@@ -28,7 +28,9 @@
 #                  installed as /bin/apps/<name>
 #   DRIVERS_DIR    optional: a graphics driver pack (scripts/build-drivers.sh,
 #                  build/drivers/<pack>): Mesa and libdrm, installed over any
-#                  copies of the same libraries brought in for programs
+#                  copies of the same libraries brought in for programs.
+#                  A stick carries the packs beside the system instead
+#                  (mkoverlay.sh), and the installer takes the machine's
 #   FONTS          optional: font files, installed at the same path as on
 #                  the build host (where Shine looks for them)
 #   WALLPAPERS     optional: a directory of wallpaper photographs (the
@@ -36,7 +38,7 @@
 #                  /usr/share/saule/wallpapers
 #
 # Dynamically linked binaries bring the libraries `ldd` names for them.
-# The tree is packed with root as the owner of every file.
+# The tree is packed with root as the owner of every file (stage.sh).
 
 set -euo pipefail
 
@@ -60,22 +62,8 @@ GEN_INIT_CPIO=$(realpath "$GEN_INIT_CPIO")
 rm -rf "$STAGE"
 mkdir -p "$STAGE"/{bin,dev,etc,proc,sys,run,tmp,root}
 
-# Copy every shared library a program or library loads into the tree.
-add_libraries() {
-    # Static binaries print "not a dynamic executable" and have no libraries.
-    ldd "$1" 2>/dev/null | grep -oE '/[^ ]+' | while read -r library; do
-        [ -e "$library" ] || continue
-        install -D -m 0755 "$(readlink -f "$library")" "$STAGE$library"
-    done || true
-}
-
-# Copy a program, and every shared library it loads, into the tree.
-add_program() {
-    local source=$1 target=$2
-
-    install -D -m 0755 "$source" "$STAGE$target"
-    add_libraries "$source"
-}
+# add_libraries, add_program, add_drivers, pack_tree.
+. "$(dirname "$0")/stage.sh"
 
 add_program "$INIT" /init
 add_program "$SESSION" /bin/session
@@ -107,22 +95,10 @@ if [ -n "${WALLPAPERS:-}" ] && [ -d "$WALLPAPERS" ]; then
     done
 fi
 
-# The graphics drivers: every library of the pack, symlinks as they are, and
-# what they load from the host (libstdc++, zlib). Last, so the pack's libdrm
-# replaces any the host's programs brought in. Stripped: Mesa's symbols are
-# most of its size, and nothing here reads them.
+# The graphics drivers. Last, so the pack's libdrm replaces any the host's
+# programs brought in.
 if [ -n "$DRIVERS_DIR" ]; then
-    lib=usr/lib/x86_64-linux-gnu
-    for library in "$DRIVERS_DIR/$lib"/*.so.* "$DRIVERS_DIR/$lib"/libgallium*.so \
-        "$DRIVERS_DIR/$lib"/gbm/*.so; do
-        [ -L "$library" ] || add_libraries "$library"
-    done
-    mkdir -p "$STAGE/$lib/gbm"
-    cp -a "$DRIVERS_DIR/$lib"/*.so.* "$DRIVERS_DIR/$lib"/libgallium*.so "$STAGE/$lib/"
-    cp -a "$DRIVERS_DIR/$lib/gbm/." "$STAGE/$lib/gbm/"
-    find "$STAGE/$lib" -maxdepth 2 -type f \( -name 'libgallium*' -o -name 'libEGL*' \
-        -o -name 'libGLESv2*' -o -name 'libgbm*' -o -name 'libdrm*' -o -name 'dri_gbm*' \) \
-        -exec strip --strip-unneeded {} +
+    add_drivers "$DRIVERS_DIR"
 fi
 
 cp -r "$ROOTFS/." "$STAGE/"
@@ -150,30 +126,8 @@ if [ -n "$TOOLS_BUSYBOX" ]; then
     done
 fi
 
-# gen_init_cpio reads a list of entries; owners are always root (0 0).
-list=$(mktemp)
-trap 'rm -f "$list"' EXIT
-
-{
-    # The console must exist before devtmpfs is mounted: the kernel opens it
-    # for init's stdin/stdout/stderr.
-    echo "nod /dev/console 0600 0 0 c 5 1"
-
-    cd "$STAGE"
-    find . -mindepth 1 | sort | while read -r path; do
-        entry=${path#.}
-        mode=$(stat -c '%a' "$path")
-
-        if [ -L "$path" ]; then
-            echo "slink $entry $(readlink "$path") $mode 0 0"
-        elif [ -d "$path" ]; then
-            echo "dir $entry $mode 0 0"
-        else
-            echo "file $entry $STAGE$entry $mode 0 0"
-        fi
-    done
-} >"$list"
-
-"$GEN_INIT_CPIO" "$list" | gzip -9 >"$output"
+# The console must exist before devtmpfs is mounted: the kernel opens it
+# for init's stdin/stdout/stderr.
+pack_tree "$output" "nod /dev/console 0600 0 0 c 5 1"
 
 echo "initramfs: $output ($(du -h "$output" | cut -f1))"
