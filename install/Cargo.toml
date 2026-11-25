@@ -1,0 +1,16 @@
+[package]
+name = "saule-install"
+version = "0.1.0"
+edition = "2021"
+description = "Puts Saule Linux on a disk: the installer's hands, and what builds the USB stick's image."
+publish = false
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
