@@ -1,0 +1,33 @@
+--[[
+The Saule Linux installer: what a computer started from the USB stick
+shows. It asks which disk, says what is on it before anything is erased,
+installs, and restarts.
+
+  saule run .     on a desktop, to see it; set SAULE_INSTALL=dev/fake-install
+                  and it installs nothing, on disks that aren't there
+
+On the stick init starts it as the session, as root (`saule.installer=1`
+on the kernel command line: see ../init/src/cmdline.rs). The writing is
+done by `saule-install` (../install), which this runs and watches.
+
+    model   the disks, the installation under way, and `saule-install`
+    theme   colours and sizes
+    views   the pieces a page is made of
+    pages   one view per step
+
+How it ends tells init what to do next: see `Installation.exitCode`.
+]]
+
+from uikit import App
+from InstallerApp import InstallerApp
+
+class Main
+  static fn main()
+    local app = InstallerApp()
+    app.run()
+
+    if app.installation.exitCode != 0 then
+      Os.exit(app.installation.exitCode)
+    end
+  end
+end

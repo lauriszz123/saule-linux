@@ -1,0 +1,125 @@
+-- A disk of this computer, as `saule-install disks` describes it: one
+-- line each, tab-separated — name, bytes, `internal` or `usb`, what is on
+-- it, and its maker's name for it.
+
+from Numbers import Numbers
+
+-- What a disk holds, as far as it matters to someone about to erase it.
+export enum Contents
+  Blank,
+  -- Saule Linux, installed: its system and its files.
+  Saule,
+  -- Files Saule Linux kept, on a disk it doesn't start from.
+  SauleData,
+  Windows,
+  Linux,
+  Other
+end
+
+export class Disk
+  -- What the kernel calls it: `sda`.
+  name: string
+  bytes: integer
+  -- On a USB port: a stick or an enclosure.
+  usb: boolean
+  contents: Contents
+  model: string
+
+  fn init(
+    name: string,
+    bytes: integer,
+    usb: boolean,
+    contents: Contents,
+    model: string
+  )
+    self.name = name
+    self.bytes = bytes
+    self.usb = usb
+    self.contents = contents
+    self.model = model
+  end
+
+  -- The disk one line of `saule-install disks` describes. Nil for a line
+  -- that isn't one, and for the stick the computer was started from, which
+  -- is listed but can't be installed onto.
+  static fn parse(line: string) -> Disk?
+    local parts = String.split(line, "\t")
+    if #parts < 4 or parts[4] == "medium" then
+      return nil
+    end
+    local bytes = Numbers.whole(parts[2])
+    if bytes == nil then
+      return nil
+    end
+
+    local model = ""
+    if #parts >= 5 then
+      model = String.trim(parts[5])
+    end
+    return Disk(
+      parts[1],
+      bytes!,
+      parts[3] == "usb",
+      Disk.contentsNamed(parts[4]),
+      model
+    )
+  end
+
+  -- What `saule-install` calls each kind of contents. A word this
+  -- doesn't know is something, to be erased only when told to.
+  static fn contentsNamed(word: string) -> Contents
+    return match word
+      case "blank" then Contents.Blank
+      case "saule" then Contents.Saule
+      case "saule-data" then Contents.SauleData
+      case "windows" then Contents.Windows
+      case "linux" then Contents.Linux
+      case _ then Contents.Other
+    end
+  end
+
+  -- What to call it: its maker's name, or what kind of disk it is.
+  fn title() -> string
+    if self.model != "" then
+      return self.model
+    end
+    if self.usb then
+      return "USB drive"
+    end
+    return "Hard disk"
+  end
+
+  -- Its size as its maker counts it, in thousands: "250 GB".
+  fn size() -> string
+    local gb = (self.bytes as float) / 1000000000.0
+    if gb >= 100.0 then
+      return String.format("%.0f GB", gb)
+    end
+    if gb >= 1.0 then
+      return String.format("%.1f GB", gb)
+    end
+    return String.format("%.0f MB", (self.bytes as float) / 1000000.0)
+  end
+
+  -- What is on it, in a few words.
+  fn holds() -> string
+    return match self.contents
+      case Contents.Blank then "Empty"
+      case Contents.Saule then "Saule Linux is installed on it"
+      case Contents.SauleData then "Has files kept by Saule Linux"
+      case Contents.Windows then "Windows is on it"
+      case Contents.Linux then "Another Linux system is on it"
+      case Contents.Other then "Has something on it"
+    end
+  end
+
+  -- Its size, where it is plugged in, and what is on it: one line under
+  -- its name.
+  fn detail() -> string
+    local kind = self.size()
+    if self.usb then
+      kind = kind .. ", on USB"
+    end
+    return kind .. " · " .. self.holds()
+  end
+end

@@ -1,0 +1,84 @@
+-- The last page before anything is written: what will happen to the
+-- chosen disk, in words that fit what is on it. An empty disk is simply
+-- installed on; one with Windows on it says so and asks to erase; one
+-- with Saule Linux already offers to keep its files.
+
+from uikit import *
+from model import Contents, Disk, Installation, Page
+from views import Choice, Step
+
+export class Confirm extends View
+  installation: Installation
+  refresh: Action
+
+  fn init(installation: Installation, refresh: Action, key: string? = nil)
+    self.super(key)
+    self.installation = installation
+    self.refresh = refresh
+  end
+
+  fn body(context: BuildContext) -> View
+    local installation = self.installation
+    local refresh = self.refresh
+    local disk = installation.disk()!
+
+    local back = fn()
+      installation.page = Page.Disks
+      refresh()
+    end
+    local erase = fn()
+      installation.start(false)
+      refresh()
+    end
+    local keep = fn()
+      installation.start(true)
+      refresh()
+    end
+
+    local named = disk.title() .. " (" .. disk.size() .. ")"
+
+    if disk.contents == Contents.Blank then
+      return Step(
+        title: "Install on this disk?",
+        said: named .. " is empty. Saule Linux will use all of it.",
+        aside: {Choice.quiet("Back", back)},
+        forward: {Choice.main("Install", erase)}
+      )
+    end
+
+    if disk.contents == Contents.Saule then
+      return Step(
+        title: "Saule Linux is already here",
+        said: named .. " has Saule Linux on it. Install it again and keep the files and settings on the disk, or erase the disk and start afresh.",
+        aside: {Choice.quiet("Back", back)},
+        forward: {
+          Choice.danger("Erase Everything", erase),
+          Choice.main("Keep My Files", keep),
+        }
+      )
+    end
+
+    return Step(
+      title: "Erase this disk?",
+      said: Confirm.loss(disk, named),
+      aside: {Choice.quiet("Back", back)},
+      forward: {Choice.danger("Erase and Install", erase)},
+      grave: true
+    )
+  end
+
+  -- What erasing `disk` loses.
+  static fn loss(disk: Disk, named: string) -> string
+    local last = " Installing erases the whole disk, and that can't be undone."
+    return match disk.contents
+      case Contents.Windows then
+        named .. " has Windows on it. Windows and every file on the disk will be gone." .. last
+      case Contents.Linux then
+        named .. " has another Linux system on it. That system and its files will be gone." .. last
+      case Contents.SauleData then
+        named .. " has files kept by Saule Linux. They will be gone." .. last
+      case _ then
+        named .. " has something on it. Everything on the disk will be gone." .. last
+    end
+  end
+end

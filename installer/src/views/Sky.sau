@@ -1,0 +1,33 @@
+-- What is behind the card: the dusk of Saule Linux's first wallpaper,
+-- dark blue at the top left to rose at the bottom right. It fills the
+-- screen.
+
+import shine
+from uikit import *
+from theme import Look
+
+export class Sky extends View
+  fn init(key: string? = nil)
+    self.super(key)
+  end
+
+  fn layout(el: Element, constraints: Constraints) -> Size
+    return constraints.biggest()
+  end
+
+  fn paint(el: Element, x: float, y: float) -> nil
+    local w = el.size.width
+    local h = el.size.height
+    local top = Look.skyTop
+    local middle = Look.skyMiddle
+    local bottom = Look.skyBottom
+
+    Graphics.setLinearGradient(x, y, x + w, y + h, {
+      0.0, top.r, top.g, top.b, 1.0,
+      0.5, middle.r, middle.g, middle.b, 1.0,
+      1.0, bottom.r, bottom.g, bottom.b, 1.0,
+    })
+    Graphics.rectangle("fill", x, y, w, h)
+    Graphics.clearGradient()
+  end
+end

@@ -1,0 +1,40 @@
+-- It stopped. What `saule-install` said went wrong is shown as it said
+-- it; trying again starts from the list of disks, looked at afresh.
+
+from uikit import *
+from model import Installation, Page
+from views import Choice, Step
+
+export class Failed extends View
+  installation: Installation
+  refresh: Action
+
+  fn init(installation: Installation, refresh: Action, key: string? = nil)
+    self.super(key)
+    self.installation = installation
+    self.refresh = refresh
+  end
+
+  fn body(context: BuildContext) -> View
+    local installation = self.installation
+    local refresh = self.refresh
+
+    local shutDown = fn()
+      installation.exitCode = Installation.powerOff
+      App.quit()
+    end
+    local again = fn()
+      installation.findDisks()
+      installation.page = Page.Disks
+      refresh()
+    end
+
+    return Step(
+      title: "Saule Linux could not be installed",
+      said: installation.failure,
+      aside: {Choice.quiet("Shut Down", shutDown)},
+      forward: {Choice.main("Try Again", again)},
+      grave: true
+    )
+  end
+end

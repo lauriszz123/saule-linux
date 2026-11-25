@@ -1,0 +1,52 @@
+-- The installer's colours and sizes, in one place: the dusk of the
+-- system's own first wallpaper behind a dark card, as the desktop it
+-- installs will look.
+
+from uikit import Color, TextStyle, ThemeData
+
+export class Look
+  -- The sky behind the card, from its top left to its bottom right.
+  static skyTop: Color = Color(0.09, 0.12, 0.30)
+  static skyMiddle: Color = Color(0.30, 0.20, 0.50)
+  static skyBottom: Color = Color(0.85, 0.48, 0.52)
+
+  static card: Color = Color(0.11, 0.11, 0.14, 0.94)
+  static cardEdge: Color = Color(1.0, 1.0, 1.0, 0.10)
+  static cardRadius: float = 16.0
+  static cardWidth: float = 560.0
+  static cardHeight: float = 440.0
+  static cardPadding: float = 28.0
+
+  static text: Color = Color(0.96, 0.96, 0.98)
+  static dimText: Color = Color(1.0, 1.0, 1.0, 0.60)
+
+  -- A row in a list, and the one chosen.
+  static row: Color = Color(1.0, 1.0, 1.0, 0.06)
+  static rowChosen: Color = Color(0.48, 0.64, 0.97, 0.30)
+  static rowRadius: float = 10.0
+  static hairline: Color = Color(1.0, 1.0, 1.0, 0.10)
+
+  -- Buttons: the one that goes on, one that goes back, and one that
+  -- erases.
+  static accent: Color = Color(0.36, 0.54, 0.95)
+  static quiet: Color = Color(1.0, 1.0, 1.0, 0.12)
+  static danger: Color = Color(0.86, 0.30, 0.30)
+  static warning: Color = Color(1.0, 0.72, 0.42)
+
+  static titleSize: float = 22.0
+  static bodySize: float = 13.0
+  static smallSize: float = 11.0
+
+  -- uikit's own controls (the progress bar) in these colours.
+  static fn theme() -> ThemeData
+    return ThemeData(
+      background: Look.card,
+      surface: Look.row,
+      border: Look.hairline,
+      text: Look.text,
+      textMuted: Look.dimText,
+      primary: Look.accent,
+      body: TextStyle(Look.text, Look.bodySize)
+    )
+  end
+end

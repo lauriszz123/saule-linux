@@ -1,0 +1,218 @@
+-- Where the installer is: which page, which disk, and how far an
+-- installation under way has got.
+
+from Numbers import Numbers
+from Disk import Contents, Disk
+from Tool import Tool
+
+-- The steps, in order. Failed can follow Installing.
+export enum Page
+  Welcome,
+  Disks,
+  Confirm,
+  Installing,
+  Done,
+  Failed
+end
+
+export class Installation
+  page: Page
+  disks: table<Disk>
+  -- The place in `disks` of the one chosen; 0 when none is.
+  chosen: integer
+
+  -- The installation under way, and what it last said it was doing
+  -- (`saule-install`'s `step` lines: prepare, system, data, boot).
+  process: Process?
+  step: string
+  -- How far it is, from 0 to 1, and how far the bar shows: the bar
+  -- follows smoothly instead of jumping.
+  reached: float
+  shown: float
+  -- What it wrote that hasn't ended in a new line yet.
+  pending: string
+  finished: boolean
+  -- Why it stopped, when it failed.
+  failure: string
+
+  -- How the installer ends, for init (../init/src/session.rs): 80 turns
+  -- the computer off, 81 restarts it, 83 starts Saule Linux from the
+  -- stick without installing. 0 while it is still deciding.
+  exitCode: integer
+
+  static powerOff: integer = 80
+  static restart: integer = 81
+  static tryFirst: integer = 83
+
+  -- How fast the bar catches up with the installation: most of the way
+  -- in a third of a second.
+  static follow: float = 5.0
+
+  fn init()
+    self.page = Page.Welcome
+    self.disks = {}
+    self.chosen = 0
+    self.process = nil
+    self.step = ""
+    self.reached = 0.0
+    self.shown = 0.0
+    self.pending = ""
+    self.finished = false
+    self.failure = ""
+    self.exitCode = 0
+  end
+
+  -- Look at the disks again, and choose the one there is when there is
+  -- only one a system would go on: the disk inside the computer.
+  fn findDisks() -> nil
+    self.disks = Tool.disks()
+    self.chosen = 0
+
+    local inside = 0
+    for i = 1, #self.disks do
+      if not self.disks[i].usb then
+        inside += 1
+        self.chosen = i
+      end
+    end
+    if inside != 1 then
+      self.chosen = 0
+    end
+  end
+
+  fn disk() -> Disk?
+    if self.chosen < 1 or self.chosen > #self.disks then
+      return nil
+    end
+    return self.disks[self.chosen]
+  end
+
+  -- Start installing on the chosen disk.
+  fn start(keepFiles: boolean) -> nil
+    local disk = self.disk()
+    if disk == nil then
+      return
+    end
+
+    self.step = "prepare"
+    self.reached = 0.0
+    self.shown = 0.0
+    self.pending = ""
+    self.finished = false
+    self.failure = ""
+    self.page = Page.Installing
+
+    self.process = Tool.install(disk!, keepFiles)
+    if self.process == nil then
+      self.fail("The installer's own program is missing from this stick.")
+    end
+  end
+
+  -- Called every frame while installing, `dt` seconds after the last:
+  -- read what the installation said, move the bar. True when the window
+  -- has something new to show.
+  fn advance(dt: float) -> boolean
+    if self.page != Page.Installing then
+      return false
+    end
+    local before = self.shown
+    local step = self.step
+
+    local process = self.process
+    if process != nil then
+      self.listen(process!)
+    end
+
+    -- The bar closes a share of the distance each frame, and the last
+    -- hundredth at once.
+    local gap = self.reached - self.shown
+    self.shown += gap * Math.min(1.0, dt * Installation.follow)
+    if gap < 0.01 then
+      self.shown = self.reached
+    end
+
+    -- Done only once the bar has shown it.
+    if self.finished and self.shown >= 1.0 then
+      self.page = Page.Done
+      return true
+    end
+    return self.shown != before or self.step != step
+      or self.page != Page.Installing
+  end
+
+  -- Take what `process` has written since last time, a line at a time,
+  -- and notice when it has ended.
+  local fn listen(process: Process) -> nil
+    local said = Bytes.toString(process.read()) ?? ""
+    if said != "" then
+      local lines = String.split(self.pending .. said, "\n")
+      self.pending = lines[#lines]
+      for i = 1, #lines - 1 do
+        self.heard(lines[i])
+      end
+    end
+
+    local code = process.poll()
+    if code == nil or not process.atEof() then
+      return
+    end
+    self.process = nil
+    if code! != 0 or not self.finished then
+      local why = String.trim(Bytes.toString(process.readErr()) ?? "")
+      if why == "" then
+        why = "The installation stopped before it was done."
+      end
+      self.fail(why)
+    end
+  end
+
+  -- One line from `saule-install`: see ../install/src/target.rs.
+  local fn heard(line: string) -> nil
+    local words = String.split(String.trim(line), " ")
+    if words[1] == "step" and #words >= 2 then
+      self.step = words[2]
+      self.reached = Math.max(self.reached, Installation.startOf(words[2]))
+    elseif words[1] == "copied" and #words >= 2 then
+      -- Copying the system is the long part: from 10% of the bar to 80%.
+      local percent = Numbers.whole(words[2]) ?? 0
+      local share = 0.10 + 0.70 * (percent as float) / 100.0
+      self.reached = Math.max(self.reached, share)
+    elseif words[1] == "done" then
+      self.finished = true
+      self.reached = 1.0
+    end
+  end
+
+  -- Where on the bar each step begins.
+  static fn startOf(step: string) -> float
+    return match step
+      case "prepare" then 0.02
+      case "system" then 0.10
+      case "data" then 0.82
+      case "boot" then 0.94
+      case _ then 0.0
+    end
+  end
+
+  -- What the step under way is, said to a person.
+  fn doing() -> string
+    return match self.step
+      case "system" then "Copying Saule Linux…"
+      case "data" then "Making room for your files…"
+      case "boot" then "Making it start by itself…"
+      case _ then "Getting the disk ready…"
+    end
+  end
+
+  local fn fail(why: string) -> nil
+    self.process = nil
+    self.failure = why
+    self.page = Page.Failed
+  end
+
+  -- Whether the chosen disk has anything on it that installing would lose.
+  fn erases() -> boolean
+    local disk = self.disk()
+    return disk != nil and disk!.contents != Contents.Blank
+  end
+end

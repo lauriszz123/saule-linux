@@ -1,0 +1,43 @@
+-- One disk in the list: its picture, its name, and under the name its
+-- size and what is on it. Lit when it is the one chosen; clicking it
+-- chooses it.
+
+from uikit import *
+from model import Disk
+from theme import Look
+from DiskGlyph import DiskGlyph
+
+export class DiskRow extends View
+  disk: Disk
+  chosen: boolean
+  onChosen: Action
+
+  fn init(disk: Disk, chosen: boolean, onChosen: Action, key: string? = nil)
+    self.super(key)
+    self.disk = disk
+    self.chosen = chosen
+    self.onChosen = onChosen
+  end
+
+  fn body(context: BuildContext) -> View
+    local fill = Look.row
+    if self.chosen then
+      fill = Look.rowChosen
+    end
+
+    local name = Text(self.disk.title()).font(14.0).foregroundStyle(Look.text)
+    local detail = Text(self.disk.detail()).font(Look.smallSize)
+    local words = VStack(alignment: StackAlignment.Leading, spacing: 3.0) do
+      show(name.lineLimit(1))
+      show(detail.foregroundStyle(Look.dimText).lineLimit(1))
+    end
+
+    local row = HStack(alignment: StackAlignment.Center, spacing: 12.0) do
+      DiskGlyph(self.disk.usb).frame(width: 36.0, height: 36.0)
+      words.expanded()
+    end
+    local inset = EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0)
+    local shown = row.padding(insets: inset).background(fill, Look.rowRadius)
+    return GestureArea(child: shown, onTap: self.onChosen)
+  end
+end

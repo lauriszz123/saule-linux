@@ -1,0 +1,33 @@
+-- While it installs: a bar, and what is being done. No buttons: there is
+-- nothing safe to do with a disk half written but finish.
+
+from uikit import *
+from model import Installation
+from theme import Look
+from views import Step
+
+export class Installing extends View
+  installation: Installation
+
+  fn init(installation: Installation, key: string? = nil)
+    self.super(key)
+    self.installation = installation
+  end
+
+  fn body(context: BuildContext) -> View
+    local installation = self.installation
+    local advice = Text("Keep the USB stick in and the computer on.")
+    local bar = ProgressView(value: installation.shown, height: 8.0)
+
+    local content = VStack(alignment: StackAlignment.Center, spacing: 14.0) do
+      bar.frame(width: 380.0)
+      show(advice.font(Look.smallSize).foregroundStyle(Look.dimText))
+    end
+
+    return Step(
+      title: "Installing Saule Linux",
+      said: installation.doing(),
+      content: content
+    )
+  end
+end

@@ -1,0 +1,42 @@
+-- `saule-install`, the program that looks at disks and writes to them
+-- (../install in this repository). On the stick it is /sbin/saule-install;
+-- SAULE_INSTALL names another, which is how the installer is tried on a
+-- desktop with dev/fake-install.
+
+from Disk import Disk
+
+export class Tool
+  static fn path() -> string
+    return Os.getenv("SAULE_INSTALL") ?? "/sbin/saule-install"
+  end
+
+  -- Every disk Saule Linux could be installed on, in the kernel's order.
+  -- None when the tool can't be run.
+  static fn disks() -> table<Disk>
+    local found: table<Disk> = {}
+    local process = Os.spawn(Tool.path(), {"disks"})
+    if process == nil then
+      return found
+    end
+    process!.wait()
+
+    local said = Bytes.toString(process!.read()) ?? ""
+    for line in String.split(said, "\n") do
+      local disk = Disk.parse(line)
+      if disk != nil then
+        Table.insert(found, disk!)
+      end
+    end
+    return found
+  end
+
+  -- Start installing onto `disk`: erasing it, or with `keepFiles` writing
+  -- only the system again. Nil when the tool can't be run.
+  static fn install(disk: Disk, keepFiles: boolean) -> Process?
+    local args: table<string> = {"install", disk.name}
+    if keepFiles then
+      Table.insert(args, "--keep-data")
+    end
+    return Os.spawn(Tool.path(), args)
+  end
+end

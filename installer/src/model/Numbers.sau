@@ -1,0 +1,23 @@
+-- Whole numbers out of text: what `saule-install` prints is text, and
+-- Saule's standard library has nothing that reads a number.
+
+export class Numbers
+  -- `text` as a whole number, when it is nothing but digits.
+  static fn whole(text: string) -> integer?
+    local digits = String.trim(text)
+    if digits == "" then
+      return nil
+    end
+
+    local value = 0
+    for i = 1, String.len(digits) do
+      local code = String.byte(digits, i)!
+      -- 48 is "0", 57 is "9".
+      if code < 48 or code > 57 then
+        return nil
+      end
+      value = value * 10 + (code - 48)
+    end
+    return value
+  end
+end

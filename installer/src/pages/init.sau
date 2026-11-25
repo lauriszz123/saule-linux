@@ -1,0 +1,8 @@
+-- pages — one view per step of the installer.
+
+export from Welcome import *
+export from ChooseDisk import *
+export from Confirm import *
+export from Installing import *
+export from Done import *
+export from Failed import *

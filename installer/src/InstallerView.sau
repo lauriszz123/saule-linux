@@ -1,0 +1,76 @@
+-- The whole screen: the sky, and on it one card showing the page the
+-- installation is on.
+--
+-- A page changes the installation and calls `refresh`, which builds the
+-- screen again from it. While installing nothing is clicked: every frame
+-- the installation is asked how far it is, and the screen is built again
+-- when the answer changed.
+
+from uikit import *
+from model import Installation, Page
+from theme import Look
+from views import Sky
+from pages import ChooseDisk, Confirm, Done, Failed, Installing, Welcome
+
+export class InstallerView extends View
+  installation: Installation
+
+  fn init(installation: Installation, key: string? = nil)
+    self.super(key)
+    self.installation = installation
+  end
+
+  -- It has a tick to run: see `View.ticks`.
+  fn ticks() -> boolean
+    return true
+  end
+
+  fn tick(el: Element, dt: float) -> nil
+    if self.installation.advance(dt) then
+      el.markNeedsBuild()
+    end
+  end
+
+  fn body(context: BuildContext) -> View
+    local revision = context.state("revision", 0)
+    local refresh = fn()
+      revision.set(revision.int(0) + 1)
+    end
+
+    local page = self.page(refresh)
+    local padded = page.padding(Look.cardPadding)
+    local sized = padded.frame(width: Look.cardWidth, height: Look.cardHeight)
+    local card = sized.background(
+      Look.card,
+      radius: Look.cardRadius,
+      border: Look.cardEdge,
+      borderWidth: 1.0
+    )
+
+    local screen = ZStack(alignment: Alignment.center()) do
+      Sky()
+      show(card)
+    end
+    return Theme(data: Look.theme(), child: screen)
+  end
+
+  -- The view of the page the installation is on.
+  local fn page(refresh: Action) -> View
+    local installation = self.installation
+    local page: View = Welcome(installation, refresh)
+    match installation.page
+      case Page.Welcome then nil
+      case Page.Disks then
+        page = ChooseDisk(installation, refresh)
+      case Page.Confirm then
+        page = Confirm(installation, refresh)
+      case Page.Installing then
+        page = Installing(installation)
+      case Page.Done then
+        page = Done(installation)
+      case Page.Failed then
+        page = Failed(installation, refresh)
+    end
+    return page
+  end
+end

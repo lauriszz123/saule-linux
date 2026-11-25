@@ -1,0 +1,34 @@
+#!/bin/sh
+# Stands in for saule-install on a desktop: disks that aren't there, and an
+# installation that writes nothing. For looking at the installer's pages:
+#
+#   SAULE_INSTALL=dev/fake-install saule run .
+#
+# FAKE_FAIL=1 makes the installation stop halfway.
+case $1 in
+disks)
+    printf 'sda\t250059350016\tinternal\twindows\tHitachi HTS545025B9A300\n'
+    printf 'sdb\t120034123776\tinternal\tsaule\tSamsung SSD 840\n'
+    printf 'sdc\t15931539456\tusb\tblank\tSanDisk Cruzer Blade\n'
+    printf 'sdd\t4004511744\tusb\tmedium\tGeneric Flash Disk\n'
+    ;;
+install)
+    echo "step prepare"; sleep 1
+    echo "driver gen3"
+    echo "step system"
+    for percent in 10 25 40 55 70 85 100; do
+        sleep 0.4
+        echo "copied $percent"
+        if [ -n "$FAKE_FAIL" ] && [ "$percent" = 55 ]; then
+            echo "the disk stopped answering" >&2
+            exit 1
+        fi
+    done
+    echo "step data"; sleep 1
+    echo "step boot"; sleep 0.6
+    echo "done"
+    ;;
+*)
+    exit 2
+    ;;
+esac

@@ -1,0 +1,36 @@
+-- Installed. The computer has to start again, from its own disk this
+-- time, so the stick comes out first.
+
+from uikit import *
+from model import Installation
+from views import Choice, Step
+
+export class Done extends View
+  installation: Installation
+
+  fn init(installation: Installation, key: string? = nil)
+    self.super(key)
+    self.installation = installation
+  end
+
+  fn body(context: BuildContext) -> View
+    local installation = self.installation
+
+    local shutDown = fn()
+      installation.exitCode = Installation.powerOff
+      App.quit()
+    end
+    local restart = fn()
+      installation.exitCode = Installation.restart
+      App.quit()
+    end
+
+    return Step(
+      title: "Saule Linux is installed",
+      said: "Take the USB stick out, then restart. The computer starts from its own disk from now on.",
+      aside: {Choice.quiet("Shut Down", shutDown)},
+      forward: {Choice.main("Restart", restart)},
+      done: true
+    )
+  end
+end

@@ -1,0 +1,52 @@
+-- Saule's sun: a white disc with eight rays on a round tile of the
+-- system's warm orange. It fills the square it is given. With `done`, a
+-- tick on green in its place: what the last page shows.
+
+import shine
+from uikit import *
+
+export class SunMark extends View
+  done: boolean
+
+  fn init(done: boolean = false, key: string? = nil)
+    self.super(key)
+    self.done = done
+  end
+
+  fn layout(el: Element, constraints: Constraints) -> Size
+    return constraints.biggest()
+  end
+
+  fn paint(el: Element, x: float, y: float) -> nil
+    local s = Math.min(el.size.width, el.size.height)
+    local cx = x + el.size.width / 2.0
+    local cy = y + el.size.height / 2.0
+
+    if self.done then
+      Graphics.setColor(0.30, 0.78, 0.46)
+      Graphics.circle("fill", cx, cy, s / 2.0)
+      Graphics.setColor(1.0, 1.0, 1.0)
+      Graphics.setLineWidth(s * 0.09)
+      Graphics.line(cx - s * 0.20, cy + s * 0.02, cx - s * 0.05, cy + s * 0.17)
+      Graphics.line(cx - s * 0.05, cy + s * 0.17, cx + s * 0.22, cy - s * 0.14)
+      return
+    end
+
+    Graphics.setColor(0.98, 0.62, 0.30)
+    Graphics.circle("fill", cx, cy, s / 2.0)
+
+    Graphics.setColor(1.0, 1.0, 1.0)
+    Graphics.circle("fill", cx, cy, s * 0.16)
+    Graphics.setLineWidth(s * 0.05)
+    for i = 0, 7 do
+      local angle = Math.pi * (i as float) / 4.0
+      local dx = Math.cos(angle)
+      local dy = Math.sin(angle)
+      local near = s * 0.25
+      local far = s * 0.36
+      local x1 = cx + dx * near
+      local y1 = cy + dy * near
+      Graphics.line(x1, y1, cx + dx * far, cy + dy * far)
+    end
+  end
+end

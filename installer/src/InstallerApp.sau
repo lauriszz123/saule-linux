@@ -1,0 +1,22 @@
+-- The installer as a uikit app: the whole screen, which on the bare screen
+-- of a computer started from the stick is the only window there is.
+
+from uikit import *
+from model import Installation
+from InstallerView import InstallerView
+
+export class InstallerApp extends App
+  installation: Installation
+
+  fn init()
+    self.super()
+    self.installation = Installation()
+  end
+
+  fn body() -> Scene
+    local title = "Install Saule Linux"
+    return WindowGroup(title: title, width: 1024, height: 600) do
+      InstallerView(self.installation)
+    end
+  end
+end

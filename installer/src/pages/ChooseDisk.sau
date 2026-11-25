@@ -1,0 +1,65 @@
+-- Which disk: every disk of the computer but the stick it started from,
+-- each with its size and what is on it. Nothing is written here.
+
+from uikit import *
+from model import Installation, Page
+from theme import Look
+from views import Choice, DiskRow, Step
+
+export class ChooseDisk extends View
+  installation: Installation
+  refresh: Action
+
+  fn init(installation: Installation, refresh: Action, key: string? = nil)
+    self.super(key)
+    self.installation = installation
+    self.refresh = refresh
+  end
+
+  fn body(context: BuildContext) -> View
+    local installation = self.installation
+    local refresh = self.refresh
+
+    local back = fn()
+      installation.page = Page.Welcome
+      refresh()
+    end
+    local onward = fn()
+      installation.page = Page.Confirm
+      refresh()
+    end
+    local again = fn()
+      installation.findDisks()
+      refresh()
+    end
+
+    if #installation.disks == 0 then
+      return Step(
+        title: "No disk was found",
+        said: "This computer has no disk Saule Linux can be installed on. A disk plugged in now will show after looking again.",
+        aside: {Choice.quiet("Back", back)},
+        forward: {Choice.main("Look Again", again)}
+      )
+    end
+
+    local rows: table<View> = {}
+    for i = 1, #installation.disks do
+      local choose = fn()
+        installation.chosen = i
+        refresh()
+      end
+      local disk = installation.disks[i]
+      Table.insert(rows, DiskRow(disk, i == installation.chosen, choose))
+    end
+    local fill = StackAlignment.Fill
+    local list = VStack(alignment: fill, spacing: 8.0, children: rows)
+
+    return Step(
+      title: "Choose a disk",
+      said: "Saule Linux takes a whole disk for itself.",
+      content: ScrollView(child: list).frame(width: 460.0, height: 176.0),
+      aside: {Choice.quiet("Back", back)},
+      forward: {Choice.main("Continue", onward, installation.chosen > 0)}
+    )
+  end
+end

@@ -1,0 +1,42 @@
+-- A small picture of a disk for its row: a hard disk as a grey slab with
+-- its light, a USB drive as a stick with its plug. It fills the square it
+-- is given.
+
+import shine
+from uikit import *
+
+export class DiskGlyph extends View
+  usb: boolean
+
+  fn init(usb: boolean = false, key: string? = nil)
+    self.super(key)
+    self.usb = usb
+  end
+
+  fn layout(el: Element, constraints: Constraints) -> Size
+    return constraints.biggest()
+  end
+
+  fn paint(el: Element, x: float, y: float) -> nil
+    local s = Math.min(el.size.width, el.size.height)
+    local left = x + (el.size.width - s) / 2.0
+    local top = y + (el.size.height - s) / 2.0
+
+    if self.usb then
+      -- The plug, then the body it sticks out of.
+      Graphics.setColor(0.72, 0.74, 0.78)
+      Graphics.rectangle("fill", left + s * 0.36, top + s * 0.06, s * 0.28, s * 0.24, 2.0, 2.0)
+      Graphics.setColor(0.86, 0.87, 0.90)
+      Graphics.rectangle("fill", left + s * 0.26, top + s * 0.28, s * 0.48, s * 0.66, 5.0, 5.0)
+      return
+    end
+
+    -- The slab, a darker band along its foot, and the light on the band.
+    Graphics.setColor(0.86, 0.87, 0.90)
+    Graphics.rectangle("fill", left + s * 0.08, top + s * 0.20, s * 0.84, s * 0.60, 5.0, 5.0)
+    Graphics.setColor(0.60, 0.62, 0.67)
+    Graphics.rectangle("fill", left + s * 0.08, top + s * 0.60, s * 0.84, s * 0.20, 5.0, 5.0)
+    Graphics.setColor(0.36, 0.86, 0.52)
+    Graphics.circle("fill", left + s * 0.78, top + s * 0.70, s * 0.045)
+  end
+end

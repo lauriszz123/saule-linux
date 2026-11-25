@@ -1,0 +1,52 @@
+-- The buttons along the foot of a page, in the three weights they come
+-- in: the one that goes on (and takes Enter), one that goes back, and one
+-- that erases.
+
+from uikit import *
+from theme import Look
+
+export class Choice
+  static padding: EdgeInsets = EdgeInsets.symmetric(horizontal: 18.0, vertical: 8.0)
+
+  -- The way forward: in the accent, and where the keyboard starts.
+  static fn main(label: string, onPressed: Action, enabled: boolean = true) -> View
+    return Button(
+      label: label,
+      onPressed: onPressed,
+      color: Look.accent,
+      textColor: Look.text,
+      textSize: Look.bodySize,
+      padding: Choice.padding,
+      radius: 8.0,
+      enabled: enabled,
+      autofocus: enabled
+    )
+  end
+
+  -- A way back, or aside.
+  static fn quiet(label: string, onPressed: Action) -> View
+    return Button(
+      label: label,
+      onPressed: onPressed,
+      color: Look.quiet,
+      textColor: Look.text,
+      textSize: Look.bodySize,
+      padding: Choice.padding,
+      radius: 8.0
+    )
+  end
+
+  -- What can't be undone. Never where the keyboard starts: Enter must not
+  -- erase a disk.
+  static fn danger(label: string, onPressed: Action) -> View
+    return Button(
+      label: label,
+      onPressed: onPressed,
+      color: Look.danger,
+      textColor: Look.text,
+      textSize: Look.bodySize,
+      padding: Choice.padding,
+      radius: 8.0
+    )
+  end
+end

@@ -1,0 +1,40 @@
+-- The first page: install, or try the system first. Trying ends the
+-- installer in the way that has init start Saule Linux as it runs from
+-- the stick, with no disk touched.
+
+from uikit import *
+from model import Installation, Page
+from views import Choice, Step
+
+export class Welcome extends View
+  installation: Installation
+  refresh: Action
+
+  fn init(installation: Installation, refresh: Action, key: string? = nil)
+    self.super(key)
+    self.installation = installation
+    self.refresh = refresh
+  end
+
+  fn body(context: BuildContext) -> View
+    local installation = self.installation
+    local refresh = self.refresh
+
+    local tryFirst = fn()
+      installation.exitCode = Installation.tryFirst
+      App.quit()
+    end
+    local install = fn()
+      installation.findDisks()
+      installation.page = Page.Disks
+      refresh()
+    end
+
+    return Step(
+      title: "Welcome to Saule Linux",
+      said: "Install it on this computer, or try it first. Trying it runs from the USB stick and changes nothing.",
+      aside: {Choice.quiet("Try It First", tryFirst)},
+      forward: {Choice.main("Install", install)}
+    )
+  end
+end

@@ -1,0 +1,91 @@
+-- A page's layout, the same on every step: a picture, a title, a few
+-- words under it, whatever the step itself shows, and its buttons along
+-- the foot, the way forward at the right.
+--
+--                  ( ☀ )
+--          Welcome to Saule Linux
+--     Install it on this computer, or …
+--
+--               [ content ]
+--
+--   [Try It First]              [Install]
+
+from uikit import *
+from theme import Look
+from SunMark import SunMark
+
+export class Step extends View
+  title: string
+  said: string
+  content: View?
+  -- At the left of the foot, and at its right.
+  aside: table<View>
+  forward: table<View>
+  done: boolean
+  -- Said in the warning colour: what is about to be lost.
+  grave: boolean
+
+  fn init(
+    title: string,
+    said: string,
+    content: View? = nil,
+    aside: table<View> = {},
+    forward: table<View> = {},
+    done: boolean = false,
+    grave: boolean = false,
+    key: string? = nil
+  )
+    self.super(key)
+    self.title = title
+    self.said = said
+    self.content = claimed(content)
+    self.aside = claimedAll(aside)
+    self.forward = claimedAll(forward)
+    self.done = done
+    self.grave = grave
+  end
+
+  fn body(context: BuildContext) -> View
+    local ink = Look.dimText
+    if self.grave then
+      ink = Look.warning
+    end
+    local title = Text(self.title).font(Look.titleSize).foregroundStyle(Look.text)
+    local said = Text(self.said).font(Look.bodySize).foregroundStyle(ink)
+    local centred = said.lineLimit(4).multilineTextAlignment(TextAlign.Center)
+
+    local foot: table<View> = {}
+    for button in self.aside do
+      Table.insert(foot, button)
+    end
+    Table.insert(foot, Spacer())
+    for button in self.forward do
+      Table.insert(foot, button)
+    end
+    local buttons = HStack(
+      alignment: StackAlignment.Center,
+      spacing: 10.0,
+      children: foot
+    )
+
+    local content = self.content
+    return VStack(alignment: StackAlignment.Center, spacing: 0.0) do
+      -- With nothing of its own to show, a page's words sit in the middle
+      -- of the card rather than at its top.
+      if content == nil then
+        Spacer()
+      end
+      SunMark(self.done).frame(width: 56.0, height: 56.0)
+      Spacer().frame(height: 14.0)
+      show(title)
+      Spacer().frame(height: 8.0)
+      centred.frame(width: 440.0)
+      Spacer().frame(height: 18.0)
+      if content != nil then
+        show(content!)
+      end
+      Spacer()
+      show(buttons)
+    end
+  end
+end
