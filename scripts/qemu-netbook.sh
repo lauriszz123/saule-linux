@@ -27,6 +27,16 @@
 #   --gl             the virtual GPU with 3D: the guest's OpenGL (Mesa's virgl,
 #                    from the `virtual` driver pack) runs on this machine's
 #                    GPU, the nearest QEMU comes to the netbook's GMA 3150
+#   --net            a network cable: an Ethernet card on QEMU's own little
+#                    network, which hands out an address and reaches the
+#                    Internet through this machine. The netbook's card is
+#                    Atheros's; this one is Intel's (e1000e), the nearest
+#                    QEMU has
+#   --efi            UEFI firmware (OVMF) in place of the BIOS. Not the
+#                    netbook, which has no EFI: a newer PC, most of which
+#                    have nothing else. What is checked is that the stick
+#                    and the disk it installs start on those too. The
+#                    firmware's own settings are kept in build/ovmf-vars.fd
 #   --vesa           no graphics driver: the screen the BIOS set up (VESA,
 #                    1024x768), as the netbook would show if i915 failed
 #                    on its GMA 3150, or any PC whose chip has no driver
@@ -58,7 +68,9 @@
 #                                     shows up as a plain mouse), and a USB
 #                                     tablet as the pointer on the desktop
 #   HD Audio                        intel-hda + hda-duplex (sound discarded)
-#   Atheros LAN, Broadcom Wi-Fi     not emulated: no network
+#   Atheros LAN, Broadcom Wi-Fi     no network, or with --net an Intel
+#                                     Ethernet card with its cable in; no
+#                                     Wi-Fi: QEMU has no radio
 #
 # Speed: with KVM (Linux, /dev/kvm writable — be in the `kvm` group) the
 # guest runs on the real CPU, much faster than the netbook. Without it (a
@@ -85,7 +97,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 
 # What the options set. `append` grows as the machine is put together:
 # several parts of it need a kernel option of their own.
-usb= kernel= initrd= append= nographic=0 bios_log= kvm=1 slow= memory=1G vesa=0 gl=0
+usb= kernel= initrd= append= nographic=0 bios_log= kvm=1 slow= memory=1G vesa=0 gl=0 efi=0 net=0
 disk=$repo/disks/netbook.qcow2
 extra=()     # everything after `--`, for QEMU as it is
 args=()      # QEMU's command line
@@ -112,6 +124,8 @@ parse_options() {
             --no-kvm)    kvm=0;                                    shift ;;
             --vesa)      vesa=1;                                   shift ;;
             --gl)        gl=1;                                     shift ;;
+            --efi)       efi=1;                                    shift ;;
+            --net)       net=1;                                    shift ;;
             --disk)      disk=${2:?--disk needs an image file};    shift 2 ;;
             --no-disk)   disk=;                                    shift ;;
             --slow)      slow=8;                                   shift ;;
@@ -206,7 +220,38 @@ add_machine() {
         -device intel-hda
         -device hda-duplex,audiodev=snd
 
-        -nic none
+    )
+    if [ "$net" = 1 ]; then
+        args+=(-nic user,model=e1000e)
+    else
+        args+=(-nic none)
+    fi
+}
+
+# UEFI firmware in place of SeaBIOS: OVMF, as two flash chips, its code
+# read-only and its settings a copy of our own (the boot order it works out
+# is kept there between runs).
+add_firmware() {
+    [ "$efi" = 1 ] || return 0
+    local code= vars= dir
+    for dir in /usr/share/OVMF /usr/share/edk2/x64 /usr/share/edk2-ovmf/x64 /opt/homebrew/share/qemu; do
+        for name in OVMF_CODE_4M.fd OVMF_CODE.4m.fd OVMF_CODE.fd edk2-x86_64-code.fd; do
+            [ -z "$code" ] && [ -r "$dir/$name" ] && code=$dir/$name
+        done
+        for name in OVMF_VARS_4M.fd OVMF_VARS.4m.fd OVMF_VARS.fd edk2-i386-vars.fd; do
+            [ -z "$vars" ] && [ -r "$dir/$name" ] && vars=$dir/$name
+        done
+    done
+    [ -n "$code" ] && [ -n "$vars" ] || fail "--efi needs UEFI firmware for QEMU (apt install ovmf)"
+
+    local ours=${OVMF_VARS:-$repo/build/ovmf-vars.fd}
+    if [ ! -e "$ours" ]; then
+        mkdir -p "$(dirname "$ours")"
+        cp "$vars" "$ours"
+    fi
+    args+=(
+        -drive "if=pflash,format=raw,unit=0,readonly=on,file=$code"
+        -drive "if=pflash,format=raw,unit=1,file=$ours"
     )
 }
 
@@ -429,6 +474,7 @@ run() {
 parse_options "$@"
 check_options
 add_machine
+add_firmware
 add_screen
 add_hard_disk
 add_boot_medium
