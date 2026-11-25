@@ -36,6 +36,18 @@
 #   WALLPAPERS     optional: a directory of wallpaper photographs (the
 #                  window manager's wallpapers/), installed in
 #                  /usr/share/saule/wallpapers
+#   SYSTEM         optional: saule-system (../system), installed as
+#                  /sbin/saule-system, which init keeps running, with its
+#                  DHCP script as /usr/share/saule/dhcp
+#   WIFI           optional: a directory holding wpa_supplicant and the
+#                  radios' firmware (scripts/fetch-wifi.sh), laid out as
+#                  they are installed
+#   ALSA           optional: ALSA's own configuration (/usr/share/alsa),
+#                  which the sound library reads before it plays anything
+#   ZONEINFO       optional: the time zone database (tzdata's
+#                  /usr/share/zoneinfo), installed at the same path: what
+#                  init tells a zone's time by, and the list of zones the
+#                  first-start setup offers
 #
 # Dynamically linked binaries bring the libraries `ldd` names for them.
 # The tree is packed with root as the owner of every file (stage.sh).
@@ -93,6 +105,46 @@ if [ -n "${WALLPAPERS:-}" ] && [ -d "$WALLPAPERS" ]; then
     for photo in "$WALLPAPERS"/*.jpg; do
         install -D -m 0644 "$photo" "$STAGE/usr/share/saule/wallpapers/$(basename "$photo")"
     done
+fi
+
+# What the session asks the machine for: see ../system.
+if [ -n "${SYSTEM:-}" ] && [ -f "$SYSTEM" ]; then
+    add_program "$SYSTEM" /sbin/saule-system
+    install -D -m 0755 "$(dirname "$0")/../system/dhcp" "$STAGE/usr/share/saule/dhcp"
+fi
+
+# Wi-Fi: wpa_supplicant with the libraries it loads, and the firmware files.
+if [ -n "${WIFI:-}" ] && [ -d "$WIFI" ]; then
+    if [ -f "$WIFI/sbin/wpa_supplicant" ]; then
+        add_program "$WIFI/sbin/wpa_supplicant" /sbin/wpa_supplicant
+    fi
+    for library in "$WIFI"/lib/extra/*; do
+        [ -f "$library" ] && install -D -m 0755 "$library" \
+            "$STAGE/usr/lib/x86_64-linux-gnu/$(basename "$library")"
+    done
+    if [ -d "$WIFI/lib/firmware" ]; then
+        mkdir -p "$STAGE/lib/firmware"
+        cp -a "$WIFI/lib/firmware/." "$STAGE/lib/firmware/"
+    fi
+fi
+
+# The sound library's configuration: which device "default" is, and how
+# each kind of card is set up. Not the files for sound cards' own DSPs.
+if [ -n "${ALSA:-}" ] && [ -d "$ALSA" ]; then
+    mkdir -p "$STAGE/usr/share/alsa"
+    cp -a "$ALSA/." "$STAGE/usr/share/alsa/"
+    rm -rf "$STAGE/usr/share/alsa/topology" "$STAGE/usr/share/alsa/ucm" "$STAGE/usr/share/alsa/ucm2"
+fi
+
+# Every zone's file and the list of them (zone1970.tab); not the copies
+# under other names for old programs, nor the tables nothing here reads.
+if [ -n "${ZONEINFO:-}" ] && [ -d "$ZONEINFO" ]; then
+    zones=$STAGE/usr/share/zoneinfo
+    mkdir -p "$zones"
+    cp -a "$ZONEINFO/." "$zones/"
+    rm -rf "$zones/posix" "$zones/right" "$zones/localtime" "$zones/posixrules" \
+        "$zones/Factory" "$zones/leap-seconds.list" "$zones/leapseconds" \
+        "$zones/tzdata.zi" "$zones/iso3166.tab" "$zones/zone.tab" "$zones/zonenow.tab"
 fi
 
 # The graphics drivers. Last, so the pack's libdrm replaces any the host's

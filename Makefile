@@ -19,8 +19,9 @@
 #                     manager nested on a desktop: see saule-wm's README)
 #
 #   make usb-image    build/saule-linux.img: a USB stick, as a file. Written
-#                     to a stick, a PC with a BIOS starts from it into the
-#                     installer, which puts Saule Linux on the PC's disk
+#                     to a stick, a PC starts from it (by its BIOS, or by
+#                     UEFI with Secure Boot off) into the installer, which
+#                     puts Saule Linux on the PC's disk
 #   make usb DEVICE=/dev/sdX
 #                     write that image to the stick at DEVICE (as root;
 #                     everything on the stick is erased). From Windows: write
@@ -29,6 +30,8 @@
 #                     with the netbook's hard disk (DISK=file for another)
 #   make run-disk     start the QEMU netbook from its hard disk alone: what
 #                     the installer put there
+#                     (EFI=1 with either: a PC with UEFI firmware and no
+#                     BIOS, which the netbook isn't and most newer PCs are)
 #
 #   make test         run init's and the installer tool's tests
 #
@@ -44,8 +47,9 @@
 # cpio qemu-system-x86 busybox-static, plus
 # `rustup target add x86_64-unknown-linux-musl`. busybox-static is the
 # command-line tools (TOOLS=1, the default) and the DEBUG=1 shell. A stick
-# also needs GRUB (grub-pc-bin grub2-common), which scripts/mkgrub.sh fetches
-# for itself where they aren't installed.
+# also needs GRUB (grub2-common grub-pc-bin grub-efi-amd64-bin) and, for its
+# FAT partition, dosfstools and mtools: scripts/mkgrub.sh fetches for itself
+# whichever aren't installed. EFI=1 needs UEFI firmware for QEMU (ovmf).
 
 KERNEL_VERSION ?= 6.18.64
 JOBS           ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
@@ -125,6 +129,20 @@ NATIVE_LIBS ?= $(wildcard $(SAULE_HOME)/native_packages/*.so)
 # image without one draws on the CPU, as it always could.
 DRIVERS     ?= virtual
 DRIVERS_DIR := $(wildcard $(BUILD)/drivers/$(DRIVERS))
+# What the session asks the machine for (system/, Rust): sleep, the volume,
+# the network. Init keeps it running.
+SYSTEM := system/target/x86_64-unknown-linux-musl/release/saule-system
+# Wi-Fi: wpa_supplicant and the radios' firmware, gathered by
+# scripts/fetch-wifi.sh into build/wifi. WIFI=0 leaves them out: 18 MB that
+# a machine with no radio, or one whose radio needs no firmware, has no use
+# for.
+WIFI     ?= 1
+WIFI_DIR := $(if $(filter 1,$(WIFI)),$(BUILD)/wifi)
+# The sound library's configuration (the alsa-lib package's data).
+ALSA     ?= $(wildcard /usr/share/alsa)
+# The time zone database (the tzdata package): init tells a zone's time by
+# it, and the first-start setup lists its zones.
+ZONEINFO    ?= $(wildcard /usr/share/zoneinfo)
 FONTS       ?= $(wildcard /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
                           /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)
 
@@ -216,10 +234,13 @@ check-config: $(KOUT)/.config
 
 init:
 	cd init && cargo build --release
+	cd system && cargo build --release --target x86_64-unknown-linux-musl
+	$(if $(WIFI_DIR),scripts/fetch-wifi.sh $(WIFI_DIR))
 
 test:
 	cd init && cargo test
 	cd install && cargo test
+	cd system && cargo test
 
 $(GEN_CPIO): $(KSRC)/Makefile
 	mkdir -p $(dir $@)
@@ -257,7 +278,8 @@ initramfs: init session apps $(GEN_CPIO)
 	STAGE=$(BUILD)/rootfs GEN_INIT_CPIO=$(GEN_CPIO) INIT=$(INIT) SESSION=$(SESSION) \
 	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) APPS_DIR=$(APPS_OUT) \
 	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" DRIVERS_DIR="$(DRIVERS_DIR)" \
-	FS_TOOLS="$(FS_TOOLS)" \
+	FS_TOOLS="$(FS_TOOLS)" ZONEINFO="$(ZONEINFO)" \
+	SYSTEM="$(SYSTEM)" WIFI="$(WIFI_DIR)" ALSA="$(ALSA)" \
 	WALLPAPERS="$(wildcard $(WM)/wallpapers)" scripts/mkinitramfs.sh $(INITRAMFS)
 
 # ---------------------------------------------------------------------------
@@ -279,16 +301,18 @@ installer:
 #   drivers/<pack>.cpio.gz       every pack built, of which a machine takes one
 #   drivers.list                 which chip takes which
 #   cmdline                      the kernel options an installed system gets
-#   grub/                        GRUB, and its configuration for the stick
+#   grub/                        GRUB for a BIOS, and GRUB's configuration
+#                                for the stick
 #
-# install/src/layout.rs says where things are on the disk; nothing here
-# needs root.
+# and after it a small FAT partition with GRUB for UEFI, which a PC without
+# a BIOS starts from. install/src/layout.rs says where things are on the
+# disk; nothing here needs root.
 usb-image: kernel installer $(GEN_CPIO)
 	rm -rf $(USB)
 	mkdir -p $(USB)/root/grub $(USB)/root/drivers
 	$(MAKE) initramfs INITRAMFS=$(USB)/root/initramfs.cpio.gz DRIVERS=none
 	cp $(BZIMAGE) $(USB)/root/vmlinuz
-	scripts/mkgrub.sh $(USB)/root/grub
+	scripts/mkgrub.sh $(USB)/root/grub $(USB)/efi.img
 	STAGE=$(USB)/stage GEN_INIT_CPIO=$(GEN_CPIO) scripts/mkoverlay.sh $(USB)/root/installer.cpio.gz \
 		--program $(INSTALLER)=/bin/installer --program $(INSTALL_TOOL)=/sbin/saule-install
 	for pack in $(PACKS); do \
@@ -298,7 +322,7 @@ usb-image: kernel installer $(GEN_CPIO)
 	cp config/drivers.list $(USB)/root/drivers.list
 	echo "$(BOOT_OPTIONS)" > $(USB)/root/cmdline
 	$(INSTALL_HOST) config "$(BOOT_OPTIONS) saule.installer=1" /installer.cpio.gz > $(USB)/root/grub/grub.cfg
-	$(INSTALL_HOST) image $(USB_IMAGE) $(USB)/root
+	$(INSTALL_HOST) image $(USB_IMAGE) $(USB)/root --efi $(USB)/efi.img
 
 # Write the image to a stick. The whole device (/dev/sdb, not /dev/sdb1),
 # and as root; WSL does not see USB sticks at all, so from Windows write
@@ -342,6 +366,7 @@ run-vnc: all
 #   MEMORY=2G  RAM, for a netbook with its memory upgraded
 #   GL=1       the virtual GPU with 3D, for drawing on the GPU (the
 #              `virtual` driver pack)
+#   NET=1      a network cable plugged in
 #
 # Its 250 GB hard disk is disks/netbook.qcow2, made empty on the first run
 # and kept from then on: what the system saves there outlives a reboot.
@@ -349,7 +374,8 @@ SLOW   ?=
 MEMORY ?= 1G
 GL     ?=
 NETBOOK_SLOW := $(if $(filter 1 yes,$(SLOW)),--slow,$(if $(SLOW),--slow=$(SLOW)))
-NETBOOK_GL   := $(if $(filter 1 yes,$(GL)),--gl)
+NET    ?=
+NETBOOK_GL   := $(if $(filter 1 yes,$(GL)),--gl) $(if $(filter 1 yes,$(NET)),--net)
 run-netbook: all
 	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) \
 		--memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL) --append "$(APPEND)"
@@ -367,15 +393,17 @@ DISK ?= disks/netbook.qcow2
 QEMU_USB_IMAGE    := $(BUILD)/saule-linux-qemu.img
 QEMU_BOOT_OPTIONS := console=ttyS0 console=tty1 video=Virtual-1:1024x600 \
                      $(if $(WSL_DISTRO_NAME),saule.env.SAULE_WM_KEY=ctrl+alt) $(APPEND)
+EFI ?=
+NETBOOK_EFI := $(if $(filter 1 yes,$(EFI)),--efi)
 run-usb:
 	$(MAKE) usb-image USB_IMAGE=$(QEMU_USB_IMAGE) BOOT_OPTIONS="$(strip $(QEMU_BOOT_OPTIONS))"
 	QEMU=$(QEMU) scripts/qemu-netbook.sh --usb $(QEMU_USB_IMAGE) --disk $(DISK) \
-		--memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL)
+		--memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL) $(NETBOOK_EFI)
 
 # The QEMU netbook started from its hard disk alone, as it starts once
 # Saule Linux is installed on it.
 run-disk:
-	QEMU=$(QEMU) scripts/qemu-netbook.sh --disk $(DISK) --memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL)
+	QEMU=$(QEMU) scripts/qemu-netbook.sh --disk $(DISK) --memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL) $(NETBOOK_EFI)
 
 # The netbook with no graphics driver: the screen the BIOS set up, drawn
 # through simpledrm. What it would show if i915 failed on its chip.
@@ -391,9 +419,11 @@ clean:
 	rm -rf $(USB) $(INSTALLER) $(BUILD)/saule-linux.img $(BUILD)/saule-linux-qemu.img
 	cd init && cargo clean
 	cd install && cargo clean
+	cd system && cargo clean
 
 distclean:
 	rm -rf $(BUILD)
 	cd init && cargo clean
 	cd install && cargo clean
+	cd system && cargo clean
 endif
