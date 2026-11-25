@@ -1,5 +1,13 @@
--- Where the installer is: which page, which disk, and how far an
--- installation under way has got.
+-- Where the installer is: which page, what was answered (the keyboard's
+-- layout, who the computer is for and their password), which disk, and
+-- how far an installation under way has got.
+--
+-- The answers are asked before the disk, so that the last thing before
+-- anything is written is what will be erased. They go to the tool that
+-- installs in a file (`Tool.install`), and it puts them on the new
+-- system's disk.
+
+import shine
 
 from Numbers import Numbers
 from Disk import Contents, Disk
@@ -8,6 +16,8 @@ from Tool import Tool
 -- The steps, in order. Failed can follow Installing.
 export enum Page
   Welcome,
+  Keyboard,
+  Account,
   Disks,
   Confirm,
   Installing,
@@ -17,6 +27,26 @@ end
 
 export class Installation
   page: Page
+
+  -- Every keyboard layout there is to choose from, as {code, name}, and
+  -- the one chosen ("us" until another is). None where the stick has no
+  -- layouts: the page for them is then passed over.
+  layouts: table<table<string>>
+  layout: string
+
+  -- Who the computer is for, their password, and the password typed
+  -- again.
+  person: string
+  password: string
+  verify: string
+
+  -- The short name their account goes by: what their home folder is
+  -- called and what a terminal's prompt says. Made from the full name
+  -- as it is typed ("Ada Lovelace" is "adalovelace"), until the person
+  -- types one of their own.
+  account: string
+  accountTyped: boolean
+
   disks: table<Disk>
   -- The place in `disks` of the one chosen; 0 when none is.
   chosen: integer
@@ -50,6 +80,13 @@ export class Installation
 
   fn init()
     self.page = Page.Welcome
+    self.layouts = {}
+    self.layout = "us"
+    self.person = ""
+    self.password = ""
+    self.verify = ""
+    self.account = ""
+    self.accountTyped = false
     self.disks = {}
     self.chosen = 0
     self.process = nil
@@ -60,6 +97,165 @@ export class Installation
     self.finished = false
     self.failure = ""
     self.exitCode = 0
+  end
+
+  -- Read the layouts there are, once.
+  fn findLayouts() -> nil
+    if #self.layouts > 0 then
+      return
+    end
+    local found: table<table<string>> = {}
+    for line in Keyboard.layouts() do
+      local fields = String.split(line, "\t")
+      if #fields >= 2 then
+        Table.insert(found, {fields[1], fields[2]})
+      end
+    end
+    self.layouts = found
+  end
+
+  -- Type with `code` from now, in the installer too: the password is
+  -- typed on the next page.
+  fn useLayout(code: string) -> nil
+    if Keyboard.setLayout(code, "") then
+      self.layout = code
+    end
+  end
+
+  -- The name of the layout chosen: "Lithuanian".
+  fn layoutName() -> string
+    for layout in self.layouts do
+      if layout[1] == self.layout then
+        return layout[2]
+      end
+    end
+    return "English (US)"
+  end
+
+  -- The full name was typed: the short one follows it, unless the
+  -- person has typed their own.
+  fn named(person: string) -> nil
+    self.person = person
+    if not self.accountTyped then
+      self.account = Installation.shortFrom(person)
+    end
+  end
+
+  -- The short name was typed. Emptied again, it follows the full name
+  -- as before.
+  fn accountNamed(account: string) -> nil
+    self.account = String.lower(String.trim(account))
+    self.accountTyped = self.account != ""
+    if not self.accountTyped then
+      self.account = Installation.shortFrom(self.person)
+    end
+  end
+
+  -- Letters with marks on them, and the letter each is without: a short
+  -- name is plain small letters. The same table as init's
+  -- (../init/src/person.rs), which makes a short name where none was
+  -- given.
+  static local marked: table<table<string>> = {
+    {"àáâãäåāăą", "a"},
+    {"çćĉċč", "c"},
+    {"ďđ", "d"},
+    {"èéêëēĕėęě", "e"},
+    {"ĝğġģ", "g"},
+    {"ĥħ", "h"},
+    {"ìíîïĩīĭįı", "i"},
+    {"ĵ", "j"},
+    {"ķ", "k"},
+    {"ĺļľŀł", "l"},
+    {"ñńņň", "n"},
+    {"òóôõöøōŏő", "o"},
+    {"ŕŗř", "r"},
+    {"śŝşšß", "s"},
+    {"ţťŧ", "t"},
+    {"ùúûüũūŭůűų", "u"},
+    {"ýÿŷ", "y"},
+    {"źżž", "z"},
+  }
+
+  -- A short name made of a full one: its letters and digits, small and
+  -- run together, at most 32 of them, not starting with a digit. "" when
+  -- the name has none (it is written in another alphabet).
+  static fn shortFrom(full: string) -> string
+    local text = String.lower(full)
+    local out = ""
+    for i = 1, String.len(text) do
+      local char = String.sub(text, i, i)
+      for pair in Installation.marked do
+        if String.contains(pair[1], char) then
+          char = pair[2]
+        end
+      end
+      local code = String.byte(char, 1) ?? 0
+      local letter = code >= 97 and code <= 122
+      local digit = code >= 48 and code <= 57
+      if String.len(out) < 32 and (letter or (digit and out != "")) then
+        out = out .. char
+      end
+    end
+    return out
+  end
+
+  -- Whether `name` can be an account's: a small letter, then small
+  -- letters, digits, hyphens and underscores.
+  static fn validAccount(name: string) -> boolean
+    if name == "" or String.len(name) > 32 then
+      return false
+    end
+    for i = 1, String.len(name) do
+      local code = String.byte(name, i) ?? 0
+      local letter = code >= 97 and code <= 122
+      local digit = code >= 48 and code <= 57
+      local mark = code == 45 or code == 95
+      if not letter and (i == 1 or not (digit or mark)) then
+        return false
+      end
+    end
+    return true
+  end
+
+  -- What is wrong with the account as typed, said to the person, or ""
+  -- when it can go on. A password is not required: without one the
+  -- computer starts straight to the desktop.
+  fn accountProblem() -> string
+    if String.trim(self.person) == "" then
+      return "Type a name."
+    end
+    if not Installation.validAccount(self.account) then
+      return "The account name is small letters and digits, starting with a letter."
+    end
+    if self.account == "root" then
+      return "The account can't be called root."
+    end
+    if String.trim(self.password) != String.trim(self.verify) then
+      return "The two passwords are not the same."
+    end
+    return ""
+  end
+
+  -- The answers as the tool reads them: a line each, and none for what
+  -- wasn't answered.
+  fn answers() -> string
+    local lines: table<string> = {}
+    if String.trim(self.person) != "" then
+      Table.insert(lines, "person " .. String.trim(self.person))
+    end
+    if Installation.validAccount(self.account) then
+      Table.insert(lines, "account " .. self.account)
+    end
+    if String.trim(self.password) != "" then
+      Table.insert(lines, "password " .. String.trim(self.password))
+    end
+    if #self.layouts > 0 then
+      Table.insert(lines, "keyboard " .. self.layout)
+    end
+    if #lines == 0 then
+      return ""
+    end
+    return String.join("\n", lines) .. "\n"
   end
 
   -- Look at the disks again, and choose the one there is when there is
@@ -102,7 +298,10 @@ export class Installation
     self.failure = ""
     self.page = Page.Installing
 
-    self.process = Tool.install(disk!, keepFiles)
+    self.process = Tool.install(disk!, keepFiles, self.answers())
+    -- The tool has the password now; nothing here needs it again.
+    self.password = ""
+    self.verify = ""
     if self.process == nil then
       self.fail("The installer's own program is missing from this stick.")
     end

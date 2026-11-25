@@ -6,3 +6,5 @@ export from Confirm import *
 export from Installing import *
 export from Done import *
 export from Failed import *
+export from ChooseKeyboard import *
+export from Account import *

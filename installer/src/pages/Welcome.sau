@@ -24,9 +24,14 @@ export class Welcome extends View
       installation.exitCode = Installation.tryFirst
       App.quit()
     end
+    -- On to the keyboard's layout, or past it where the stick has none
+    -- to choose from.
     local install = fn()
-      installation.findDisks()
-      installation.page = Page.Disks
+      installation.findLayouts()
+      installation.page = Page.Keyboard
+      if #installation.layouts == 0 then
+        installation.page = Page.Account
+      end
       refresh()
     end
 

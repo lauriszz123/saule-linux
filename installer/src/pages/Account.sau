@@ -1,0 +1,103 @@
+-- Who the computer is for: their name, the short name their account
+-- goes by (made from the name as it is typed, and theirs to change: it
+-- is what their home folder is called), and the password the computer
+-- will ask for when it starts and when its screen is unlocked. A password can be left out:
+-- the computer then starts straight to the desktop, and one can be set
+-- later in Settings.
+--
+-- What is typed here is kept on the new system's disk as it is
+-- installed; the password itself is not, only what checks one.
+
+from uikit import *
+from model import Installation, Page
+from theme import Look
+from views import Choice, Entry, Step
+
+export class Account extends View
+  installation: Installation
+  refresh: Action
+
+  fn init(installation: Installation, refresh: Action, key: string? = nil)
+    self.super(key)
+    self.installation = installation
+    self.refresh = refresh
+  end
+
+  fn body(context: BuildContext) -> View
+    local installation = self.installation
+    local refresh = self.refresh
+
+    local back = fn()
+      installation.page = Page.Keyboard
+      if #installation.layouts == 0 then
+        installation.page = Page.Welcome
+      end
+      refresh()
+    end
+    local onward = fn()
+      if installation.accountProblem() == "" then
+        installation.findDisks()
+        installation.page = Page.Disks
+        refresh()
+      end
+    end
+    local entered = fn(text: string)
+      onward()
+    end
+
+    local name = Entry(installation.person, "Your name", fn(text: string)
+      installation.named(text)
+      refresh()
+    end, entered, first: true)
+    local account = Entry(
+      installation.account,
+      "Account name",
+      fn(text: string)
+        installation.accountNamed(text)
+        refresh()
+      end,
+      entered
+    )
+    local password = Entry(installation.password, "Password", fn(text: string)
+      installation.password = text
+      refresh()
+    end, entered, hidden: true)
+    local verify = Entry(
+      installation.verify,
+      "Password, again",
+      fn(text: string)
+        installation.verify = text
+        refresh()
+      end,
+      entered,
+      hidden: true
+    )
+
+    local problem = installation.accountProblem()
+    local note = "Typed on the " .. installation.layoutName() .. " keyboard."
+    local ink = Look.dimText
+    if String.trim(installation.person) != "" and problem != "" then
+      note = problem
+      ink = Look.warning
+    elseif String.trim(installation.person) != "" and String.trim(installation.password) == "" then
+      note = "With no password, anyone can use this computer."
+    end
+    local noted = Text(note).font(Look.smallSize).foregroundStyle(ink)
+
+    local content = VStack(alignment: StackAlignment.Fill, spacing: 6.0) do
+      show(name)
+      show(account)
+      show(password)
+      show(verify)
+      noted.centered()
+    end
+
+    return Step(
+      title: "Who is this computer for?",
+      said: "A name, the account's short name, and a password to ask for when the computer starts.",
+      content: content.frame(width: 320.0),
+      aside: {Choice.quiet("Back", back)},
+      forward: {Choice.main("Continue", onward, problem == "")}
+    )
+  end
+end

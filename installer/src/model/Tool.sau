@@ -31,12 +31,37 @@ export class Tool
   end
 
   -- Start installing onto `disk`: erasing it, or with `keepFiles` writing
-  -- only the system again. Nil when the tool can't be run.
-  static fn install(disk: Disk, keepFiles: boolean) -> Process?
+  -- only the system again. `answers` is what the person told the
+  -- installer (see ../install/src/answers.rs), handed over in a file the
+  -- tool removes as it reads it: an argument could be read by any other
+  -- program. Nil when the tool can't be run.
+  static fn install(disk: Disk, keepFiles: boolean, answers: string) -> Process?
     local args: table<string> = {"install", disk.name}
     if keepFiles then
       Table.insert(args, "--keep-data")
     end
+    if answers != "" then
+      local file = Tool.keep(answers)
+      if file != nil then
+        Table.insert(args, "--answers")
+        Table.insert(args, file!)
+      end
+    end
     return Os.spawn(Tool.path(), args)
+  end
+
+  -- Write `answers` where only this session keeps things, in memory:
+  -- they never touch a disk as typed.
+  static local fn keep(answers: string) -> string?
+    local folder = Os.getenv("XDG_RUNTIME_DIR") ?? "/run/saule"
+    Os.mkdir(folder, true)
+    local path = folder .. "/install-answers"
+    local file = Io.open(path, IoMode.Write)
+    if file == nil then
+      return nil
+    end
+    file!.write(answers)
+    file!.close()
+    return path
   end
 end

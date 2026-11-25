@@ -8,14 +8,17 @@
 //! 2. the system's file system, and into it the kernel, the initramfs,
 //!    the one graphics driver pack this machine's chip needs, and GRUB's
 //!    configuration;
-//! 3. the data's file system, with a note in it when the disk had Windows
-//!    on it: its clock keeps local time;
+//! 3. the data's file system, and in it what the person told the installer
+//!    (`answers.rs`: who the machine is for, the password, the keyboard's
+//!    layout), and a note when the disk had Windows on it: its clock keeps
+//!    local time;
 //! 4. GRUB, which is what makes the machine start any of it: for UEFI in
 //!    the partition at the end of the disk, copied from the stick's own,
 //!    and for a BIOS in the disk's first sectors, last of all.
 //!
 //! With `--keep-data`, on a disk that has Saule Linux already: the same
-//! without 1 and 3. The system is written again and what was kept stays.
+//! without 1, and with no new file system in 3. The system is written
+//! again and what was kept stays, but for the answers given this time.
 //!
 //! What it is doing goes to standard output a line at a time, for the
 //! installer's window to show:
@@ -36,6 +39,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::answers::Answers;
 use crate::disks::{self, Contents, Disk};
 use crate::drivers;
 use crate::grub::{self, Grub};
@@ -55,6 +59,8 @@ pub struct Request<'a> {
     pub keep_data: bool,
     /// A folder laid out as the stick is, instead of the stick itself.
     pub from: Option<&'a Path>,
+    /// What the person told the installer.
+    pub answers: Answers,
 }
 
 fn say(line: &str) {
@@ -126,12 +132,22 @@ pub fn install(request: &Request) -> io::Result<()> {
     system.copy_to(target.path())?;
     target.unmount()?;
 
-    if let Some(data_device) = data_device {
-        say("step data");
-        sys::format(&data_device, None, DATA_LABEL, Format::Data)?;
-        if matches!(disk.contents, Contents::Windows | Contents::WindowsAndLinux) {
-            note_local_clock(&data_device)?;
+    say("step data");
+    match data_device {
+        Some(data_device) => {
+            sys::format(&data_device, None, DATA_LABEL, Format::Data)?;
+            let local_clock =
+                matches!(disk.contents, Contents::Windows | Contents::WindowsAndLinux);
+            settle(&data_device, local_clock, &request.answers)?;
         }
+        // The data kept: only what was answered this time is written.
+        None if !request.answers.is_empty() => {
+            let Some((number, _)) = disks::labelled_partition(&disk, DATA_LABEL) else {
+                return refuse("The disk has no data partition to keep the answers on.");
+            };
+            settle(&partition_device(&disk, number), false, &request.answers)?;
+        }
+        None => {}
     }
 
     say("step boot");
@@ -279,16 +295,23 @@ fn kept_system(disk: &Disk) -> io::Result<PathBuf> {
     }
 }
 
+/// What a new system finds on its data disk before anything has run:
+/// the answers given to the installer, and whether the PC's clock keeps
+/// local time.
+///
 /// Windows sets a PC's own clock to local time, where Linux expects UTC.
 /// A machine that had Windows on it is taken to have its clock that way
 /// still: said in a file on the new data disk, which init reads once the
 /// person has chosen a time zone (`clock` in ../init/src/system.rs), so
 /// the time comes out right without anyone having to set it.
-fn note_local_clock(data_device: &Path) -> io::Result<()> {
+fn settle(data_device: &Path, local_clock: bool, answers: &Answers) -> io::Result<()> {
     let data = Mounted::new(data_device, Path::new(TARGET_AT), false)?;
-    let folder = data.path().join("system");
-    fs::create_dir_all(&folder)?;
-    fs::write(folder.join("clock"), "local\n")?;
+    if local_clock {
+        let folder = data.path().join("system");
+        fs::create_dir_all(&folder)?;
+        fs::write(folder.join("clock"), "local\n")?;
+    }
+    answers.keep(data.path())?;
     data.unmount()
 }
 

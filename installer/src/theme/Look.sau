@@ -14,7 +14,7 @@ export class Look
   static cardEdge: Color = Color(1.0, 1.0, 1.0, 0.10)
   static cardRadius: float = 16.0
   static cardWidth: float = 560.0
-  static cardHeight: float = 440.0
+  static cardHeight: float = 480.0
   static cardPadding: float = 28.0
 
   static text: Color = Color(0.96, 0.96, 0.98)

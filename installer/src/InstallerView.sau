@@ -10,7 +10,8 @@ from uikit import *
 from model import Installation, Page
 from theme import Look
 from views import Sky
-from pages import ChooseDisk, Confirm, Done, Failed, Installing, Welcome
+from pages import Account, ChooseDisk, ChooseKeyboard, Confirm, Done, Failed
+from pages import Installing, Welcome
 
 export class InstallerView extends View
   installation: Installation
@@ -60,6 +61,10 @@ export class InstallerView extends View
     local page: View = Welcome(installation, refresh)
     match installation.page
       case Page.Welcome then nil
+      case Page.Keyboard then
+        page = ChooseKeyboard(installation, refresh)
+      case Page.Account then
+        page = Account(installation, refresh)
       case Page.Disks then
         page = ChooseDisk(installation, refresh)
       case Page.Confirm then

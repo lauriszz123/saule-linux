@@ -21,7 +21,7 @@ export class ChooseDisk extends View
     local refresh = self.refresh
 
     local back = fn()
-      installation.page = Page.Welcome
+      installation.page = Page.Account
       refresh()
     end
     local onward = fn()

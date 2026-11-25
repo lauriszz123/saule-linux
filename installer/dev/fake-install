@@ -13,6 +13,16 @@ disks)
     printf 'sdd\t4004511744\tusb\tmedium\tGeneric Flash Disk\n'
     ;;
 install)
+    # The answers' file is removed as it is read, as the real one does.
+    shift
+    while [ $# -gt 0 ]; do
+        if [ "$1" = --answers ] && [ -n "${2:-}" ]; then
+            echo "fake-install: answers were:" >&2
+            sed 's/^password .*/password (given)/' "$2" >&2
+            rm -f "$2"
+        fi
+        shift
+    done
     echo "step prepare"; sleep 1
     echo "driver gen3"
     echo "step system"

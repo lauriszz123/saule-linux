@@ -1,0 +1,33 @@
+-- One thing to pick in a list: its name, lit when it is the one chosen.
+-- Clicking it chooses it.
+
+from uikit import *
+from theme import Look
+
+export class PickRow extends View
+  title: string
+  chosen: boolean
+  onChosen: Action
+
+  fn init(title: string, chosen: boolean, onChosen: Action, key: string? = nil)
+    self.super(key)
+    self.title = title
+    self.chosen = chosen
+    self.onChosen = onChosen
+  end
+
+  fn body(context: BuildContext) -> View
+    local fill = Look.row
+    if self.chosen then
+      fill = Look.rowChosen
+    end
+    local name = Text(self.title).font(Look.bodySize).foregroundStyle(Look.text)
+    local row = HStack(alignment: StackAlignment.Center) do
+      show(name.lineLimit(1))
+      Spacer()
+    end
+    local inset = EdgeInsets.symmetric(horizontal: 12.0, vertical: 7.0)
+    local shown = row.padding(insets: inset).background(fill, 8.0)
+    return GestureArea(child: shown, onTap: self.onChosen)
+  end
+end

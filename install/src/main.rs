@@ -9,7 +9,7 @@
 //!       every disk, one per line, tab-separated:
 //!       name, bytes, `internal` or `usb`, what is on it, model
 //!
-//!   saule-install install DISK [--keep-data] [--from FOLDER]
+//!   saule-install install DISK [--keep-data] [--answers FILE] [--from FOLDER]
 //!       erase DISK (`sda`) and install onto it; see `target.rs` for what
 //!       it prints. Needs root.
 //!
@@ -31,6 +31,7 @@
 //!       the graphics driver pack this machine's chip needs, going by
 //!       the list given on standard input.
 
+mod answers;
 mod disks;
 mod drivers;
 mod grub;
@@ -73,7 +74,9 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!("usage: saule-install disks");
-            eprintln!("       saule-install install DISK [--keep-data] [--from FOLDER]");
+            eprintln!(
+                "       saule-install install DISK [--keep-data] [--answers FILE] [--from FOLDER]"
+            );
             eprintln!("       saule-install image OUT ROOT --efi IMAGE [--megabytes N]");
             eprintln!("       saule-install live-drivers");
             eprintln!("       saule-install config OPTIONS [OVERLAY...]");
@@ -96,11 +99,16 @@ fn install(disk: &str, options: &[&str]) -> std::io::Result<()> {
         disk,
         keep_data: false,
         from: None,
+        answers: answers::Answers::default(),
     };
     let mut rest = options.iter();
     while let Some(option) = rest.next() {
         match *option {
             "--keep-data" => request.keep_data = true,
+            "--answers" => match rest.next() {
+                Some(file) => request.answers = answers::Answers::take(Path::new(file))?,
+                None => return Err(std::io::Error::other("--answers needs a file")),
+            },
             "--from" => match rest.next() {
                 Some(folder) => request.from = Some(Path::new(folder)),
                 None => return Err(std::io::Error::other("--from needs a folder")),

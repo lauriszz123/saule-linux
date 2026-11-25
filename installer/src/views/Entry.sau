@@ -1,0 +1,49 @@
+-- A field something is typed in, in the installer's colours.
+
+from uikit import *
+from theme import Look
+
+export class Entry extends View
+  value: string
+  placeholder: string
+  hidden: boolean
+  first: boolean
+  onChanged: ValueChanged<string>
+  onSubmitted: ValueChanged<string>?
+
+  fn init(
+    value: string,
+    placeholder: string,
+    onChanged: ValueChanged<string>,
+    onSubmitted: ValueChanged<string>? = nil,
+    hidden: boolean = false,
+    first: boolean = false,
+    key: string? = nil
+  )
+    self.super(key ?? placeholder)
+    self.value = value
+    self.placeholder = placeholder
+    self.hidden = hidden
+    self.first = first
+    self.onChanged = onChanged
+    self.onSubmitted = onSubmitted
+  end
+
+  fn body(context: BuildContext) -> View
+    return TextField(
+      value: self.value,
+      placeholder: self.placeholder,
+      style: TextStyle(Look.text, 14.0),
+      placeholderStyle: TextStyle(Look.dimText, 14.0),
+      background: Look.row,
+      border: Look.hairline,
+      focusBorder: Look.accent,
+      padding: EdgeInsets.symmetric(horizontal: 10.0, vertical: 8.0),
+      radius: 8.0,
+      autofocus: self.first,
+      obscure: self.hidden,
+      onChanged: self.onChanged,
+      onSubmitted: self.onSubmitted
+    )
+  end
+end

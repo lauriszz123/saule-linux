@@ -6,3 +6,5 @@ export from DiskGlyph import *
 export from DiskRow import *
 export from Choice import *
 export from Step import *
+export from PickRow import *
+export from Entry import *
