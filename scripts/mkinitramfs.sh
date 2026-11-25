@@ -48,6 +48,15 @@
 #                  /usr/share/zoneinfo), installed at the same path: what
 #                  init tells a zone's time by, and the list of zones the
 #                  first-start setup offers
+#   BLUETOOTH      optional: a directory holding BlueZ, a D-Bus daemon
+#                  for it and Intel's radios' firmware
+#                  (scripts/fetch-bluetooth.sh), laid out as they are
+#                  installed
+#   XKB            optional: XKB's descriptions of keyboard layouts
+#                  (xkeyboard-config's /usr/share/X11/xkb), installed at
+#                  the same path with the library that reads them
+#                  (libxkbcommon): what Shine types by on a keyboard that
+#                  isn't a US one, and the list of layouts to choose from
 #
 # Dynamically linked binaries bring the libraries `ldd` names for them.
 # The tree is packed with root as the owner of every file (stage.sh).
@@ -145,6 +154,45 @@ if [ -n "${ZONEINFO:-}" ] && [ -d "$ZONEINFO" ]; then
     rm -rf "$zones/posix" "$zones/right" "$zones/localtime" "$zones/posixrules" \
         "$zones/Factory" "$zones/leap-seconds.list" "$zones/leapseconds" \
         "$zones/tzdata.zi" "$zones/iso3166.tab" "$zones/zone.tab" "$zones/zonenow.tab"
+fi
+
+# Bluetooth: BlueZ's daemon and its command-line client, the bus they
+# talk over and its configuration, and the radios' firmware.
+if [ -n "${BLUETOOTH:-}" ] && [ -d "$BLUETOOTH/bin" ]; then
+    add_program "$BLUETOOTH/bin/bluetoothd" /usr/sbin/bluetoothd
+    add_program "$BLUETOOTH/bin/bluetoothctl" /usr/bin/bluetoothctl
+    add_program "$BLUETOOTH/bin/dbus-daemon" /usr/bin/dbus-daemon
+    for library in "$BLUETOOTH"/lib/extra/*; do
+        [ -f "$library" ] && install -D -m 0755 "$library" \
+            "$STAGE/usr/lib/x86_64-linux-gnu/$(basename "$library")"
+    done
+    install -D -m 0644 "$BLUETOOTH/etc/system.conf" "$STAGE/usr/share/dbus-1/system.conf"
+    if [ -d "$BLUETOOTH/lib/firmware" ]; then
+        mkdir -p "$STAGE/lib/firmware"
+        cp -a "$BLUETOOTH/lib/firmware/." "$STAGE/lib/firmware/"
+    fi
+fi
+
+# Keyboard layouts, and the library Shine looks for when one is asked for.
+# Not the drawings of keyboards nor the lists for other programs' menus.
+# Without the library the descriptions are no use, and are left out: the
+# system then types as a US keyboard and offers no other.
+if [ -n "${XKB:-}" ] && [ -d "$XKB" ]; then
+    # All of ldconfig's list is read: awk leaving at the first match would
+    # end ldconfig with a broken pipe, and this script with it.
+    xkbcommon=$(ldconfig -p | awk '$1 == "libxkbcommon.so.0" && /x86-64/ && !found { print $NF; found = 1 }')
+    if [ -n "$xkbcommon" ]; then
+        install -D -m 0755 "$(readlink -f "$xkbcommon")" "$STAGE$xkbcommon"
+        add_libraries "$xkbcommon"
+        layouts=$STAGE/usr/share/X11/xkb
+        mkdir -p "$layouts"
+        cp -aL "$XKB/." "$layouts/"
+        rm -rf "$layouts/geometry" "$layouts"/rules/*.xml "$layouts"/rules/*.dtd
+        # Newer libraries look under this name first.
+        ln -sfn X11/xkb "$STAGE/usr/share/xkeyboard-config-2"
+    else
+        echo "mkinitramfs: no libxkbcommon.so.0 here: the image types as a US keyboard only" >&2
+    fi
 fi
 
 # The graphics drivers. Last, so the pack's libdrm replaces any the host's

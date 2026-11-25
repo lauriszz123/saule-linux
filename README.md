@@ -62,7 +62,7 @@ Then:
 | `make usb DEVICE=/dev/sdX` | write that image to a stick (as root; the stick is erased) |
 | `make run-usb` | the QEMU netbook started from the stick, into the installer. `DISK=file.qcow2` gives it a disk to practise on instead of `disks/netbook.qcow2` |
 | `make run-disk` | the QEMU netbook started from its hard disk alone: what the installer put there |
-| `make test` | run init's and the installer tool's tests |
+| `make test` | run the tests of init, the installer tool, the system service and the password crate |
 | `make menuconfig` | change kernel options; copy the keepers into `config/kernel.config` |
 | `make check-config` | list options `config/kernel.config` asked for but didn't get |
 | `make clean` / `make distclean` | remove build output / everything including the kernel source. Neither touches `disks/` |
@@ -137,17 +137,30 @@ The stick starts the **installer** (`installer/`, a Saule program):
 
 1. **Welcome**: install, or *Try It First*, which starts Saule Linux as it
    runs from the stick and touches no disk.
-2. **Choose a disk**: every disk but the stick (SATA, NVMe, eMMC, USB),
+2. **Choose the keyboard**: its layout, from every one XKB describes, with
+   a search and a field to try the keys in. Asked first, because the next
+   page has a password typed on it.
+3. **Who is this computer for?**: a name, the short name the account
+   goes by (made from the name as it is typed, and there to be changed),
+   and a password to ask for when the computer starts. The password can
+   be left out.
+4. **Choose a disk**: every disk but the stick (SATA, NVMe, eMMC, USB),
    with its size and what is on it: empty, Windows, another Linux, both,
    Saule Linux. A system that no longer starts is still told for what it
    was: its partitions say whose they are after their file systems are
    gone, and a GPT damaged at the start of the disk is read from its copy
    at the end.
-3. **Confirm**: said to fit the disk. An empty one is simply installed on.
+5. **Confirm**: said to fit the disk. An empty one is simply installed on.
    One with Windows on it says so, and asks to erase with a button Enter
    can't press. One with Saule Linux already offers to keep its files:
    the system is written again and `/data` is left alone.
-4. **Installing**, then **Restart**, with the stick taken out first.
+6. **Installing**, then **Restart**, with the stick taken out first.
+
+The answers go to `saule-install` in a file it removes as it reads it, and
+from there onto the new data disk: the layout as `/data/system/keyboard`,
+the name and the password in `/data/account` (see
+[Logging in](#logging-in)). Installing again with the files kept replaces
+only what was answered this time.
 
 What it installs:
 
@@ -168,7 +181,12 @@ the initramfs from the first partition, which is then never mounted, so no
 power cut and no program can leave a machine that doesn't start. The second
 partition is the [data disk](#storage).
 
-**After installing**, the first start asks three things, over the desktop
+Until it is given a name, a machine is called after what it is, as its
+maker's firmware says: an Inspiron 7559 is `Inspiron-7559`
+(`init/src/system.rs`), and that is the name the first start offers.
+
+**After installing**, the first start is already typed in the layout
+chosen, and asks three things, over the desktop
 they are about to change (the window manager's first-start setup): a name
 for the computer, the time zone, and the look. Each takes effect as it is
 chosen, and is kept on the data disk: `/data/system/hostname` and
@@ -209,7 +227,41 @@ the installer's pages on a desktop without installing anything:
 A stick's kernel options are `BOOT_OPTIONS` (default `quiet`), which the
 installed system inherits.
 
-## Sound, network and sleep
+## Logging in
+
+A computer installed with a password starts at a login screen, and asks
+for the password again whenever its screen is unlocked: after Lock Screen,
+and after sleep. One installed without starts straight to the desktop, and
+a password can be set later in Settings.
+
+There is one person to a computer. Who they are and what is kept of their
+password are files in `/data/account`, which is root's:
+
+- `name`, which anyone can read;
+- `user`, the short name their account goes by. The image has one
+  ordinary account, `display`; at each start init renames it to this
+  (`init/src/person.rs`: the same user and group numbers under another
+  name, in `/etc/passwd` and `/etc/group`), so the home is
+  `/data/home/ada`, a terminal's prompt says `ada`, and no `display` is
+  left on an installed system. A home kept under the old name is moved.
+  Started from the stick, the installer runs as root and *Try It First*
+  as `display`: neither is on the disk;
+- `password`, which only root can. It holds no password but what
+  `password/` makes of one: PBKDF2 with HMAC-SHA-256, salted, 60 000
+  rounds, as a line that also says how it was made, so the rounds can be
+  raised later without old passwords ceasing to be right.
+
+The session can't read that file, so the lock screen can't check a
+password itself. It asks `saule-system` (`unlock PASSWORD`), which answers
+yes or no in `/run/saule/system/login`. A wrong password costs a wait
+before the answer, twice as long for each one in a row, up to eight
+seconds. Changing the password goes the same way and takes the old one.
+
+What this keeps out is somebody at the keyboard. The disk is not
+encrypted: taken out and read elsewhere, its files are there to read, and
+its password file can be replaced.
+
+## Sound, the screen, network and sleep
 
 The session runs as an ordinary account, which can't put the machine to
 sleep, turn the sound card's volume or bring up a network. `saule-system`
@@ -217,9 +269,10 @@ sleep, turn the sound card's volume or bring up a network. `saule-system`
 it running. It is spoken to through files in `/run/saule/system`:
 
 - a file dropped in `requests/` is one request, a line of text (`sleep`,
-  `volume 40`, `mute 1`, `wifi join Home<tab>password`). Only the session's
-  account can write there;
-- `power`, `sound` and `network` say how each stands, a few lines each,
+  `volume 40`, `mute 1`, `brightness 70`, `wifi join Home<tab>password`,
+  `unlock PASSWORD`). Only the session's account can write there;
+- `power`, `sound`, `display`, `network`, `login`, `disks`, `clock` and
+  `bluetooth` say how each stands, a few lines each,
   rewritten as they change. `cat /run/saule/system/network` shows what
   the window manager's bar is showing.
 
@@ -230,6 +283,32 @@ What it does:
 - **Sound**: finds the card's volume and its switch among the mixer's
   controls and turns them, with the kernel's own requests (no ALSA
   library but for playing). The volume chosen is kept on the data disk.
+- **The microphone, the headphones and the cards**: the level and the
+  switch of what the card records; whether headphones are in their
+  socket, where the card says; and, with more than one card that has a
+  volume (a USB headset beside the laptop's own), which one plays, told
+  to the sound library in `/etc/asound.conf` for programs started after.
+- **Drives that are plugged in** (`disks.rs`): a USB stick's or card's
+  partitions are mounted under `/run/media`, by their label, FAT, exFAT,
+  NTFS or ext, for the session's account to read and write; `eject sdb1`
+  flushes and lets go. The file browser lists them.
+- **The clock** (`clock.rs`): once the machine is on a network the time
+  is asked of a time server (SNTP), the system's clock is set by it, and
+  the PC's own clock with it, in UTC; a note in the settings tells init
+  that the PC's clock is no longer in local time. Asked again every six
+  hours.
+- **Bluetooth** (`bluetooth.rs`): where the machine has a radio, BlueZ's
+  daemon is started, with a D-Bus daemon for it that only root may use,
+  and asked through `bluetoothctl`: the radio, a search, pairing (a
+  keyboard's digits are passed on to be shown), connecting. What was
+  paired is kept on the data disk. `scripts/fetch-bluetooth.sh` gathers
+  BlueZ, D-Bus and Intel's radios' firmware; `BLUETOOTH=0` leaves them
+  out. For mice and keyboards: sound over Bluetooth needs a sound server
+  the system doesn't have. **None of it has met a radio**: QEMU has none.
+- **The screen's brightness**: a laptop's backlight
+  (`/sys/class/backlight`), the firmware's before the laptop driver's
+  before the graphics driver's. Never to nothing: the lowest is the
+  dimmest the screen can still be read at.
 - **A cable**: an interface with one in it is brought up and asked an
   address for by DHCP (BusyBox's `udhcpc`, so `TOOLS=1`).
 - **Wi-Fi**: runs `wpa_supplicant` on the machine's radio and talks to it
@@ -238,8 +317,21 @@ What it does:
   `wpa_supplicant` itself are gathered by `scripts/fetch-wifi.sh`; `WIFI=0`
   leaves them out of the image.
 
+**The keys with pictures on them.** Volume up, down and mute, brightness
+up and down, sleep and the power button arrive as keys among the input
+devices: from the keyboard itself, from ACPI's video device, or from a
+maker's own driver (Dell's and HP's are in the kernel). Shine names them
+(`volumeup`, `brightnessdown`, …) and the window manager acts on them and
+shows the new level on the screen for a moment.
+
+**Keyboard layouts.** The image carries XKB's descriptions
+(`/usr/share/X11/xkb`, from the build machine's xkb-data) and
+libxkbcommon to read them; Shine types by the layout chosen. `XKB=` builds
+without them, and the system then types as a US keyboard and offers no
+other.
+
 `make NET=1 run-netbook` plugs a cable into the QEMU netbook. QEMU has no
-radio, no lid and no battery, and its default graphics card comes back
+radio, no lid, no battery and no backlight, and its default graphics card comes back
 from sleep with a blank screen (the real ones restore theirs).
 
 ## Storage
@@ -305,6 +397,7 @@ init/                    PID 1 (Rust)
   src/session.rs         start the session, restart it, reap orphans
   src/output.rs          what the session prints, copied to every console
   src/account.rs         accounts from /etc/passwd, dropping root for the session
+  src/person.rs          the session's account, named after the person
   src/seat.rs            screen and input devices to video/input, hotplug included
   src/power.rs           poweroff / reboot and the signals for them
   src/cmdline.rs         saule.* kernel options
@@ -316,18 +409,28 @@ install/                 saule-install (Rust): lays out a disk, puts GRUB on
   src/disks.rs           the machine's disks, and what is on each
   src/drivers.rs         which driver pack a graphics chip needs
   src/target.rs          installing onto this machine's disk
+  src/answers.rs         what the installer was told, put on the data disk
   src/image.rs           a stick's image, made on the build machine
+password/                how a password is kept (Rust): made by
+                         saule-install, checked by saule-system
 system/                  saule-system (Rust): what the session asks the
                          machine for
   src/requests.rs        requests, as files dropped in a folder
   src/power.rs           sleep, and the lid
   src/sound.rs           the volume, through the card's control device
+  src/backlight.rs       the screen's brightness
+  src/disks.rs           drives plugged in: mounted, and let go of
+  src/clock.rs           the time, from a time server
+  src/bluetooth.rs       BlueZ, started and asked
+  src/login.rs           the person's name; checking and changing the
+                         password
   src/network.rs         a cable's interface, and how every one stands
   src/wifi.rs            wpa_supplicant, started and talked to
   dhcp                   what udhcpc runs when it is given an address
 installer/               the installer's window, a Saule project (uikit)
   src/model/             the disks, the installation under way, the tool
-  src/pages/             one view per step
+  src/pages/             one view per step: welcome, keyboard, account,
+                         disk, confirm, installing, done
   dev/fake-install       stands in for saule-install on a desktop
 session/                 the fallback session: a hello-world Saule project,
                          built when there is no ../saule-wm
@@ -364,7 +467,7 @@ disks/                   the emulated netbook's hard disk (not in git, and
 
 The plan follows macOS (see ROADMAP.md, "Security"). Today:
 
-- **Only init is root.** The session runs as `display`, the way macOS runs
+- **Only init is root.** The session runs as an ordinary account (the person's; `display` until somebody is named), the way macOS runs
   its WindowServer as `_windowserver`. It can use the screen and input
   devices, through the `video` and `input` groups, and its own
   home, but it can't write system files or read other accounts'.
@@ -373,6 +476,10 @@ The plan follows macOS (see ROADMAP.md, "Security"). Today:
 - **It fails closed:** if the account is missing, the session doesn't start
   as root instead. `saule.user=root` has to be passed on purpose.
 - The debug shell (`DEBUG=1`) is root, as a debugging tool.
+
+- **The password is root's to read.** What is kept of it is in a file the
+  session can't open; the session asks whether a password is right and is
+  told yes or no (see [Logging in](#logging-in)).
 
 Apps the window manager starts today run as `display` too. Separating them
 is the next step on the roadmap.

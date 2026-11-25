@@ -58,7 +58,21 @@ QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
         zone, the look (saule-wm's first-start setup, `init/src/system.rs`);
   - [x] what was on a disk told from its partitions as well as its file
         systems, so a system that no longer starts is still named;
-  - [ ] changing the name and the time zone later, in Settings;
+  - [x] the keyboard's layout, chosen on the stick before anything is
+        typed, and typed with from the first start on (XKB's layouts,
+        read by libxkbcommon in Shine);
+  - [x] a person and a password, asked by the installer: a login screen
+        when the computer starts, and the password to unlock the screen
+        (`password/`, `system/src/login.rs`, saule-wm's lock screen);
+  - [x] the account called after the person, not `display`: its home, a
+        terminal's prompt (`init/src/person.rs`);
+  - [x] changing the name, the time zone, the password and the layouts
+        later, in Settings;
+  - [ ] more than one person to a computer, each with a home of their own;
+  - [ ] the disk encrypted, so that the password also keeps out somebody
+        who takes the disk;
+  - [x] the clock set from a time server once there is a network
+        (`system/src/clock.rs`);
   - [ ] setting the clock by hand;
   - [ ] installing beside Windows instead of over it.
 - [ ] **On the real netbook**: nothing here has run on it yet. The stick
@@ -85,7 +99,18 @@ QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
         Atheros's radios (`system/`, and the window manager's bar). Of
         these only sleep, the volume and a cable have run anywhere, in
         QEMU;
-  - [ ] the keys for volume and brightness, and the screen's brightness;
+  - [x] the keys for volume and brightness, and the screen's brightness
+        (`system/src/backlight.rs`; ACPI's video device and Dell's and
+        HP's own key drivers in the kernel). The volume keys have run in
+        QEMU; nothing there has a backlight;
+  - [ ] the key drivers of other makers (Lenovo's, ASUS's, Acer's);
+  - [x] Bluetooth, as far as it can be built without a radio to try it
+        on: the kernel's stack, BlueZ and a D-Bus daemon for it in the
+        image, radio, search, pairing and connecting from Settings
+        (`system/src/bluetooth.rs`). For mice and keyboards;
+  - [ ] sound over Bluetooth, which wants a sound server;
+  - [x] the microphone's level, whether headphones are in, and which
+        card plays (`system/src/sound.rs`);
   - [ ] Wi-Fi radios other than those (Broadcom's, Realtek's, MediaTek's),
         and the firmware as a pack the installer chooses, as the graphics
         drivers are.
@@ -270,14 +295,28 @@ What the display server needs from Rust. Everything above it is Saule.
 ## Phase 7: apps 🌙
 
 - [x] Gamemaker running as a client, unchanged.
-- [ ] A terminal. What it needs from Rust is done 🦀: `Os.spawnPty` runs a
-      shell behind a pseudo-terminal (Unix pty / Windows ConPTY), the kernel
-      has pseudo-terminals and init mounts `/dev/pts`, and every image has
-      BusyBox's tools in `/usr/bin` (`TOOLS=1`, the default). Checked on
-      Saule Linux with `examples/pty-check`.
+- [x] A terminal (saule-linux-apps' `terminal/`): BusyBox's shell, `vi`
+      and `top` run in it. Under it: `Os.spawnPty` runs a shell behind a
+      pseudo-terminal (Unix pty / Windows ConPTY), the kernel has
+      pseudo-terminals and init mounts `/dev/pts`, and every image has
+      BusyBox's tools in `/usr/bin` (`TOOLS=1`, the default).
+  - [ ] tabs; wide characters; the mouse reported to programs.
 - [x] Settings and About This System
       ([saule-linux-apps](https://github.com/lauriszz123/saule-linux-apps)).
-- [ ] A file browser, a text editor.
+- [x] A file browser and a text editor (`files/`, `editor/`), sharing how
+      a folder is read and the open and save panel (`lib/fileskit`). One
+      app opens a file in another by asking the window manager
+      (`WmSettings.launch`).
+  - [ ] Saule's own call for what a file is (its size, its date, whether
+        it is a folder): the file browser asks the system's `stat`, and
+        copies and removes folders with `cp` and `rm`;
+  - [ ] choosing several files at once, dragging them, and copies that
+        don't hold the window;
+  - [x] USB sticks and other disks mounted and shown, and ejected
+        (`system/src/disks.rs`; FAT, exFAT, NTFS and ext in the kernel);
+  - [x] an app told its window is closing in time to ask about unsaved
+        changes (Shine's `Window.holdClose`, uikit's `App.onCloseRequest`);
+  - [ ] apps for what else is in a folder: pictures, PDFs.
 
 ## Security: the macOS model 🦀🌙
 

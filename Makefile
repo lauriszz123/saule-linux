@@ -138,11 +138,19 @@ SYSTEM := system/target/x86_64-unknown-linux-musl/release/saule-system
 # for.
 WIFI     ?= 1
 WIFI_DIR := $(if $(filter 1,$(WIFI)),$(BUILD)/wifi)
+# Bluetooth: BlueZ, a D-Bus daemon for it and Intel's radios' firmware,
+# gathered by scripts/fetch-bluetooth.sh into build/bluetooth.
+# BLUETOOTH=0 leaves them out.
+BLUETOOTH     ?= 1
+BLUETOOTH_DIR := $(if $(filter 1,$(BLUETOOTH)),$(BUILD)/bluetooth)
 # The sound library's configuration (the alsa-lib package's data).
 ALSA     ?= $(wildcard /usr/share/alsa)
 # The time zone database (the tzdata package): init tells a zone's time by
 # it, and the first-start setup lists its zones.
 ZONEINFO    ?= $(wildcard /usr/share/zoneinfo)
+# Keyboard layouts (the xkb-data package), with the host's libxkbcommon to
+# read them: what is typed on a keyboard that isn't a US one.
+XKB         ?= $(wildcard /usr/share/X11/xkb)
 FONTS       ?= $(wildcard /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
                           /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)
 
@@ -236,11 +244,13 @@ init:
 	cd init && cargo build --release
 	cd system && cargo build --release --target x86_64-unknown-linux-musl
 	$(if $(WIFI_DIR),scripts/fetch-wifi.sh $(WIFI_DIR))
+	$(if $(BLUETOOTH_DIR),scripts/fetch-bluetooth.sh $(BLUETOOTH_DIR))
 
 test:
 	cd init && cargo test
 	cd install && cargo test
 	cd system && cargo test
+	cd password && cargo test
 
 $(GEN_CPIO): $(KSRC)/Makefile
 	mkdir -p $(dir $@)
@@ -279,7 +289,8 @@ initramfs: init session apps $(GEN_CPIO)
 	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) APPS_DIR=$(APPS_OUT) \
 	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" DRIVERS_DIR="$(DRIVERS_DIR)" \
 	FS_TOOLS="$(FS_TOOLS)" ZONEINFO="$(ZONEINFO)" \
-	SYSTEM="$(SYSTEM)" WIFI="$(WIFI_DIR)" ALSA="$(ALSA)" \
+	SYSTEM="$(SYSTEM)" WIFI="$(WIFI_DIR)" ALSA="$(ALSA)" XKB="$(XKB)" \
+	BLUETOOTH="$(BLUETOOTH_DIR)" \
 	WALLPAPERS="$(wildcard $(WM)/wallpapers)" scripts/mkinitramfs.sh $(INITRAMFS)
 
 # ---------------------------------------------------------------------------
