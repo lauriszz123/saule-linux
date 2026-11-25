@@ -1,0 +1,38 @@
+#!/usr/bin/busybox sh
+# What `udhcpc` runs when it is given an address, renews one, or has none:
+# installed as /usr/share/saule/dhcp, and named to it by saule-system
+# (system/src/network.rs).
+#
+# udhcpc sets: $1 (deconfig, bound, renew, …), $interface, $ip, $mask (the
+# prefix's length), $router and $dns. METRIC is saule-system's: which
+# route is taken when a cable and Wi-Fi both lead out.
+#
+# The image has no /bin/sh and no PATH worth the name, so every tool is
+# BusyBox's, by its own name.
+
+bb=/usr/bin/busybox
+
+case "$1" in
+    deconfig)
+        $bb ip addr flush dev "$interface"
+        $bb ip link set "$interface" up
+        ;;
+    bound | renew)
+        $bb ip addr flush dev "$interface"
+        $bb ip addr add "$ip/${mask:-24}" dev "$interface"
+
+        for gateway in $router; do
+            $bb ip route del default dev "$interface" 2>/dev/null
+            $bb ip route add default via "$gateway" dev "$interface" metric "${METRIC:-100}"
+            break
+        done
+
+        # Whichever interface was given an address last names the servers.
+        if [ -n "$dns" ]; then
+            for server in $dns; do
+                echo "nameserver $server"
+            done > /etc/resolv.conf.part
+            $bb mv /etc/resolv.conf.part /etc/resolv.conf
+        fi
+        ;;
+esac

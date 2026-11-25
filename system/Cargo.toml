@@ -1,0 +1,16 @@
+[package]
+name = "saule-system"
+version = "0.1.0"
+edition = "2021"
+description = "What a session may ask of the machine but not do itself: sleep, the volume, the network."
+publish = false
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
