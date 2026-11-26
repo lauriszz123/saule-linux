@@ -137,8 +137,14 @@ if [ -n "${WALLPAPERS:-}" ] && [ -d "$WALLPAPERS" ]; then
     done
 fi
 
-# What the session asks the machine for: see ../system.
-if [ -n "${SYSTEM:-}" ] && [ -f "$SYSTEM" ]; then
+# What the session asks the machine for: see ../system. Named but not
+# there is a mistake, not a choice: the image would start with no sound,
+# network, battery or drives, and say nothing of why.
+if [ -n "${SYSTEM:-}" ] && [ ! -f "$SYSTEM" ]; then
+    echo "mkinitramfs.sh: SYSTEM=$SYSTEM does not exist" >&2
+    exit 1
+fi
+if [ -n "${SYSTEM:-}" ]; then
     add_program "$SYSTEM" /sbin/saule-system
     install -D -m 0755 "$(dirname "$0")/../system/dhcp" "$STAGE/usr/share/saule/dhcp"
 fi

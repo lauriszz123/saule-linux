@@ -27,6 +27,11 @@
 #   --gl             the virtual GPU with 3D: the guest's OpenGL (Mesa's virgl,
 #                    from the `virtual` driver pack) runs on this machine's
 #                    GPU, the nearest QEMU comes to the netbook's GMA 3150
+#   --stick IMAGE    a USB stick plugged in, IMAGE as its contents (a disk
+#                    image file: one with a FAT partition reads as an
+#                    ordinary stick): what Files lists under Locations and
+#                    a report (Mod+Shift+R) is written to. Unlike --usb's,
+#                    it is not started from
 #   --net            a network cable: an Ethernet card on QEMU's own little
 #                    network, which hands out an address and reaches the
 #                    Internet through this machine. The netbook's card is
@@ -97,7 +102,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 
 # What the options set. `append` grows as the machine is put together:
 # several parts of it need a kernel option of their own.
-usb= kernel= initrd= append= nographic=0 bios_log= kvm=1 slow= memory=1G vesa=0 gl=0 efi=0 net=0
+usb= stick= kernel= initrd= append= nographic=0 bios_log= kvm=1 slow= memory=1G vesa=0 gl=0 efi=0 net=0
 disk=$repo/disks/netbook.qcow2
 extra=()     # everything after `--`, for QEMU as it is
 args=()      # QEMU's command line
@@ -125,6 +130,7 @@ parse_options() {
             --vesa)      vesa=1;                                   shift ;;
             --gl)        gl=1;                                     shift ;;
             --efi)       efi=1;                                    shift ;;
+            --stick)     stick=${2:?--stick needs an image};        shift 2 ;;
             --net)       net=1;                                    shift ;;
             --disk)      disk=${2:?--disk needs an image file};    shift 2 ;;
             --no-disk)   disk=;                                    shift ;;
@@ -343,6 +349,17 @@ add_boot_medium() {
 
 # Where the screen is shown: nowhere (--nographic), or a window sized to
 # it, unless a display was asked for after `--`.
+# A stick plugged in (--stick), beside the hard disk and any stick started
+# from: on the same USB 2.0 port the netbook's sticks use.
+add_stick() {
+    [ -n "$stick" ] || return 0
+    [ -r "$stick" ] || fail "can't read $stick"
+    args+=(
+        -drive "if=none,id=plugged,format=raw,file=$stick"
+        -device usb-storage,bus=ehci.0,drive=plugged,removable=on
+    )
+}
+
 add_window() {
     # The window's own OpenGL, which a 3D virtual GPU draws through. Under
     # WSL that is Windows' GPU through Mesa's D3D12 driver, which Mesa
@@ -478,6 +495,7 @@ add_firmware
 add_screen
 add_hard_disk
 add_boot_medium
+add_stick
 add_window
 if [ "$mac_window" = 1 ]; then
     use_mac_window

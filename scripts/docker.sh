@@ -150,7 +150,7 @@ case $cmd in
                 mkdir -p "$SAULE_HOME/native_packages"
                 cp /target/release/libsaule_shine.so "$SAULE_HOME/native_packages/"
             fi
-            make SAULE=/target/release/saule INIT=/target/x86_64-unknown-linux-musl/release/saule-init "$@"
+            make SAULE=/target/release/saule "$@"
             # What the Mac runs or hands on: the kernel and initramfs for
             # QEMU, the sticks (usb-image, run-usb) and update files. Each
             # only when newer than the copy there, a stick being large.

@@ -374,9 +374,12 @@ libxkbcommon to read them; Shine types by the layout chosen. `XKB=` builds
 without them, and the system then types as a US keyboard and offers no
 other.
 
-`make NET=1 run-netbook` plugs a cable into the QEMU netbook. QEMU has no
-radio, no lid, no battery and no backlight, and its default graphics card comes back
-from sleep with a blank screen (the real ones restore theirs).
+The QEMU netbook has a network cable plugged in (`NET=0` takes its card
+out), and `make STICK=stick.img run-netbook` plugs in a USB stick with that
+disk image as its contents. QEMU has no radio, no lid, no battery and no
+backlight, so Wi-Fi, Bluetooth, the battery and brightness are seen only on
+real hardware; and its default graphics card comes back from sleep with a
+blank screen (the real ones restore theirs).
 
 ## Storage
 

@@ -68,12 +68,19 @@ APP     ?= $(if $(wildcard $(WM)/saule.config),$(WM),session)
 APPS_REPO ?= ../saule-linux-apps
 APPS    ?= $(patsubst %/saule.config,%,$(wildcard $(APPS_REPO)/*/saule.config))
 
+# Where cargo leaves a crate's build: the crate's own target/, or
+# CARGO_TARGET_DIR when that is set, which every crate then shares. The
+# container sets it (scripts/docker.sh); a path into a crate's own folder
+# there names a file that was never made, and the program it names was left
+# out of the image without a word (saule-system, on every Mac-built image).
+cargo_out = $(or $(CARGO_TARGET_DIR),$(1)/target)
+
 BUILD     := build
 KSRC      := $(BUILD)/linux-$(KERNEL_VERSION)
 KOUT      := $(abspath $(BUILD)/kernel)
 KCONFIG   := $(abspath config/kernel.config)
 BZIMAGE   := $(KOUT)/arch/x86/boot/bzImage
-INIT      := init/target/x86_64-unknown-linux-musl/release/saule-init
+INIT      := $(call cargo_out,init)/x86_64-unknown-linux-musl/release/saule-init
 GEN_CPIO  := $(BUILD)/tools/gen_init_cpio
 INITRAMFS := $(BUILD)/initramfs.cpio.gz
 SESSION   := $(BUILD)/session
@@ -84,8 +91,8 @@ TARBALL   := $(BUILD)/downloads/linux-$(KERNEL_VERSION).tar.xz
 # that does its writing (install/, Rust): for the netbook, static, and for
 # this machine, where it makes the stick's image.
 INSTALLER    := $(BUILD)/installer
-INSTALL_TOOL := install/target/x86_64-unknown-linux-musl/release/saule-install
-INSTALL_HOST := install/target/release/saule-install
+INSTALL_TOOL := $(call cargo_out,install)/x86_64-unknown-linux-musl/release/saule-install
+INSTALL_HOST := $(call cargo_out,install)/release/saule-install
 # The system's version: the day and minute it was built, unless said.
 # What an update file says it is, and what Settings says is running. Not
 # called VERSION: that is the kernel's own, and a variable given on the
@@ -146,7 +153,7 @@ DRIVERS     ?= virtual
 DRIVERS_DIR := $(wildcard $(BUILD)/drivers/$(DRIVERS))
 # What the session asks the machine for (system/, Rust): sleep, the volume,
 # the network. Init keeps it running.
-SYSTEM := system/target/x86_64-unknown-linux-musl/release/saule-system
+SYSTEM := $(call cargo_out,system)/x86_64-unknown-linux-musl/release/saule-system
 # Wi-Fi: wpa_supplicant and the radios' firmware, gathered by
 # scripts/fetch-wifi.sh into build/wifi. WIFI=0 leaves them out: 18 MB that
 # a machine with no radio, or one whose radio needs no firmware, has no use
@@ -442,7 +449,9 @@ run-vnc: all
 #   MEMORY=2G  RAM, for a netbook with its memory upgraded
 #   GL=1       the virtual GPU with 3D, for drawing on the GPU (the
 #              `virtual` driver pack)
-#   NET=1      a network cable plugged in
+#   NET=0      no network card: the netbook's port has a cable in
+#              otherwise (QEMU's Intel card, the nearest to its Atheros)
+#   STICK=f    a USB stick plugged in, with disk image f as its contents
 #
 # Its 250 GB hard disk is disks/netbook.qcow2, made empty on the first run
 # and kept from then on: what the system saves there outlives a reboot.
@@ -450,8 +459,10 @@ SLOW   ?=
 MEMORY ?= 1G
 GL     ?=
 NETBOOK_SLOW := $(if $(filter 1 yes,$(SLOW)),--slow,$(if $(SLOW),--slow=$(SLOW)))
-NET    ?=
-NETBOOK_GL   := $(if $(filter 1 yes,$(GL)),--gl) $(if $(filter 1 yes,$(NET)),--net)
+NET    ?= 1
+STICK  ?=
+NETBOOK_GL   := $(if $(filter 1 yes,$(GL)),--gl) $(if $(filter 1 yes,$(NET)),--net) \
+                $(if $(STICK),--stick $(STICK))
 run-netbook: all
 	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) \
 		--memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL) --append "$(APPEND)"
