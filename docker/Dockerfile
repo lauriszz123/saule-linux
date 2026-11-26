@@ -33,6 +33,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xkb-data libxkbcommon0 pci.ids \
     && rm -rf /var/lib/apt/lists/*
 
+# What `make drivers` builds the graphics driver packs with
+# (scripts/build-drivers.sh): Mesa's and libdrm's build system and the
+# Python modules Mesa generates code and checks versions with. Meson from PyPI: Mesa 26 needs
+# 1.4 or later and Ubuntu 24.04 has 1.3. In a virtual environment of its
+# own, as Ubuntu wants a pip install to be, which sees the system's mako and
+# yaml; only its `meson` is put on the path.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ninja-build python3-mako python3-yaml python3-packaging python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv --system-site-packages /opt/meson \
+    && /opt/meson/bin/pip install --no-cache-dir meson==1.7.0 \
+    && ln -s /opt/meson/bin/meson /usr/local/bin/meson
+
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path \
     && rustup target add x86_64-unknown-linux-musl

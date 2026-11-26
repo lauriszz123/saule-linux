@@ -324,7 +324,8 @@ session:
 	$(SAULE) build $(APP) -o $(SESSION)
 
 # The graphics driver pack DRIVERS names, into build/drivers/<pack>: Mesa and
-# libdrm, built from source (needs meson, ninja and python3-mako). Once is
+# libdrm, built from source (needs meson, ninja, python3-mako and
+# python3-yaml; on a Mac the build container has them). Once is
 # enough; the image takes it from there.
 drivers:
 	scripts/build-drivers.sh $(DRIVERS)
