@@ -180,7 +180,7 @@ fi
 # Wi-Fi: wpa_supplicant with the libraries it loads, and the firmware files.
 if [ -n "${WIFI:-}" ] && [ -d "$WIFI" ]; then
     if [ -f "$WIFI/sbin/wpa_supplicant" ]; then
-        add_program "$WIFI/sbin/wpa_supplicant" /sbin/wpa_supplicant
+        add_program "$WIFI/sbin/wpa_supplicant" /sbin/wpa_supplicant "$WIFI/lib/extra"
     fi
     for library in "$WIFI"/lib/extra/*; do
         [ -f "$library" ] && install -D -m 0755 "$library" \
@@ -214,9 +214,11 @@ fi
 # Bluetooth: BlueZ's daemon and its command-line client, the bus they
 # talk over and its configuration, and the radios' firmware.
 if [ -n "${BLUETOOTH:-}" ] && [ -d "$BLUETOOTH/bin" ]; then
-    add_program "$BLUETOOTH/bin/bluetoothd" /usr/sbin/bluetoothd
-    add_program "$BLUETOOTH/bin/bluetoothctl" /usr/bin/bluetoothctl
-    add_program "$BLUETOOTH/bin/dbus-daemon" /usr/bin/dbus-daemon
+    # With the libraries that came with them, and what those load in turn:
+    # bluetoothd's libdw needs three more, and without them never started.
+    add_program "$BLUETOOTH/bin/bluetoothd" /usr/sbin/bluetoothd "$BLUETOOTH/lib/extra"
+    add_program "$BLUETOOTH/bin/bluetoothctl" /usr/bin/bluetoothctl "$BLUETOOTH/lib/extra"
+    add_program "$BLUETOOTH/bin/dbus-daemon" /usr/bin/dbus-daemon "$BLUETOOTH/lib/extra"
     for library in "$BLUETOOTH"/lib/extra/*; do
         [ -f "$library" ] && install -D -m 0755 "$library" \
             "$STAGE/usr/lib/x86_64-linux-gnu/$(basename "$library")"
@@ -280,6 +282,10 @@ if [ -n "$TOOLS_BUSYBOX" ]; then
         [ -e "$STAGE/usr/bin/$applet" ] || ln -s busybox "$STAGE/usr/bin/$applet"
     done
 fi
+
+# Every program in the tree must find its libraries there: one that
+# doesn't is a program that never starts, found out on somebody's machine.
+"$(dirname "$0")/check-libraries.sh" "$STAGE"
 
 # The console must exist before devtmpfs is mounted: the kernel opens it
 # for init's stdin/stdout/stderr.

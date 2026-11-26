@@ -11,21 +11,44 @@
 #
 # Dynamically linked binaries bring the libraries `ldd` names for them.
 
-# Copy every shared library a program or library loads into the tree.
+# Copy every shared library a program or library loads into the tree. OWN,
+# when given, is a folder of libraries it came with, which this machine has
+# none of. They are looked for there too, so that what *they* load is seen
+# and copied as well: `ldd` can't say what a library it didn't find needs.
+# Those go where the system looks for libraries; the rest, where they are.
 add_libraries() {
+    local file=$1 own=${2:-} library
+    # The whole path, as `ldd` will print it; a folder that isn't there is
+    # no folder of libraries.
+    if [ -n "$own" ]; then
+        own=$(cd "$own" 2>/dev/null && pwd) || own=
+    fi
     # Static binaries print "not a dynamic executable" and have no libraries.
-    ldd "$1" 2>/dev/null | grep -oE '/[^ ]+' | while read -r library; do
+    if [ -n "$own" ]; then
+        LD_LIBRARY_PATH=$own${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} ldd "$file" 2>/dev/null
+    else
+        ldd "$file" 2>/dev/null
+    fi | grep -oE '/[^ ]+' | while read -r library; do
         [ -e "$library" ] || continue
-        install -D -m 0755 "$(readlink -f "$library")" "$STAGE$library"
+        case ${own:+$library} in
+            "$own"/*)
+                install -D -m 0755 "$(readlink -f "$library")" \
+                    "$STAGE/usr/lib/x86_64-linux-gnu/$(basename "$library")" ;;
+            *)
+                install -D -m 0755 "$(readlink -f "$library")" "$STAGE$library" ;;
+        esac
     done || true
 }
 
-# Copy a program, and every shared library it loads, into the tree.
+# Copy a program, and every shared library it loads, into the tree. OWN,
+# when given, is a folder of libraries the program came with, which this
+# machine has none of: they are found there, and go where the system looks
+# for libraries.
 add_program() {
-    local source=$1 target=$2
+    local source=$1 target=$2 own=${3:-}
 
     install -D -m 0755 "$source" "$STAGE$target"
-    add_libraries "$source"
+    add_libraries "$source" "$own"
 }
 
 # The graphics drivers of the pack in directory $1: every library of the
