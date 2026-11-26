@@ -20,8 +20,9 @@
 # it is missing, and newer cards are a line each below. Atheros's 802.11n
 # cards need no file.
 #
-# Whatever is not on this machine is fetched with `apt-get download` and
-# unpacked under OUT_DIR: nothing is installed, no root is needed.
+# Whatever is not on this machine is fetched by fetch-debs.sh, with the
+# packages it depends on, and unpacked under OUT_DIR: nothing is
+# installed, no root is needed.
 
 set -euo pipefail
 
@@ -64,40 +65,37 @@ echo "$firmware" | while read -r path sum; do
     esac
 done
 
-# wpa_supplicant, and the one library of its that a machine without it
-# installed tends not to have.
+# wpa_supplicant: this machine's own, else its package and whatever that
+# needs which this machine doesn't have.
+here=$(cd "$(dirname "$0")" && pwd)
 packages=$out/dl/packages
-unpack() {
-    mkdir -p "$packages"
-    (cd "$packages" && apt-get download -q "$@" >/dev/null)
-    local package
-    for package in "$packages"/*.deb; do
-        dpkg-deb -x "$package" "$packages/root"
-    done
-}
 
 supplicant=$(command -v wpa_supplicant || true)
 if [ -z "$supplicant" ]; then
     if [ ! -x "$packages/root/usr/sbin/wpa_supplicant" ]; then
-        command -v apt-get >/dev/null || {
-            echo "fetch-wifi.sh: wpa_supplicant not found (apt install wpasupplicant)" >&2
-            exit 1
-        }
         echo "fetch-wifi.sh: no wpa_supplicant on this machine; fetching its package into $out"
-        unpack wpasupplicant libnl-genl-3-200
+        "$here/fetch-debs.sh" "$packages" "$packages/root" wpasupplicant
     fi
     supplicant=$packages/root/usr/sbin/wpa_supplicant
 fi
 install -m 0755 "$supplicant" "$out/sbin/wpa_supplicant"
 
-# Libraries it names that this machine can't find: from the packages.
-ldd "$supplicant" 2>/dev/null | awk '/not found/ { print $1 }' | while read -r library; do
-    found=$(find "$packages/root" -name "$library*" -type f 2>/dev/null | head -1)
-    [ -n "$found" ] || {
-        echo "fetch-wifi.sh: wpa_supplicant needs $library, which was not found" >&2
-        exit 1
-    }
-    install -m 0755 "$found" "$out/lib/extra/$library"
+# The libraries it loads that this machine has none of, and what those load
+# in turn, from the packages: a round for each step down.
+for round in 1 2 3; do
+    for binary in "$out/sbin/wpa_supplicant" "$out"/lib/extra/*; do
+        [ -f "$binary" ] || continue
+        LD_LIBRARY_PATH="$out/lib/extra" ldd "$binary" 2>/dev/null |
+            awk '/not found/ { print $1 }' | while read -r library; do
+            # Often a link to the file with the version in its name.
+            found=$(find "$packages/root" -name "$library" 2>/dev/null | head -1)
+            [ -n "$found" ] || {
+                echo "fetch-wifi.sh: $(basename "$binary") needs $library, which was not found" >&2
+                exit 1
+            }
+            install -m 0755 "$(readlink -f "$found")" "$out/lib/extra/$library"
+        done
+    done
 done
 
 # Broadcom's cards before the BCM4313 (the BCM4312 of the HP Mini 210, and
@@ -114,11 +112,7 @@ b43_sum=f1e7067aac5b62b67b8b6e4c517990277804339ac16065eb13c731ff909ae46f
 if [ "${B43:-1}" != 0 ] && [ ! -f "$out/lib/firmware/b43/ucode15.fw" ]; then
     cutter=$(command -v b43-fwcutter || true)
     if [ -z "$cutter" ]; then
-        mkdir -p "$out/packages"
-        (cd "$out/packages" && apt-get download -q b43-fwcutter >/dev/null)
-        for package in "$out"/packages/b43-fwcutter*.deb; do
-            dpkg-deb -x "$package" "$out/tools"
-        done
+        "$here/fetch-debs.sh" "$out/packages" "$out/tools" b43-fwcutter
         cutter=$out/tools/usr/bin/b43-fwcutter
     fi
     if [ ! -f "$out/dl/$b43_archive" ]; then

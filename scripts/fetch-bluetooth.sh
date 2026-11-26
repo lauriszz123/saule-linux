@@ -62,16 +62,10 @@ done
 [ -x /usr/sbin/bluetoothd ] || [ -x /usr/libexec/bluetooth/bluetoothd ] || have_all=0
 
 if [ "$have_all" = 0 ] && [ ! -x "$packages/root/usr/bin/bluetoothctl" ]; then
-    command -v apt-get >/dev/null || {
-        echo "fetch-bluetooth.sh: BlueZ and D-Bus not found (apt install bluez dbus-daemon)" >&2
-        exit 1
-    }
     echo "fetch-bluetooth.sh: fetching BlueZ's and D-Bus's packages into $out"
-    mkdir -p "$packages"
-    (cd "$packages" && apt-get download -q bluez dbus-daemon libdbus-1-3 libdw1t64 libelf1t64 >/dev/null)
-    for package in "$packages"/*.deb; do
-        dpkg-deb -x "$package" "$packages/root"
-    done
+    # With whatever they need that this machine doesn't have: GLib,
+    # AppArmor's library, elfutils', D-Bus's own.
+    "$(dirname "$0")/fetch-debs.sh" "$packages" "$packages/root" bluez dbus-daemon
 fi
 
 # Where a program is: on this machine, or in the packages.

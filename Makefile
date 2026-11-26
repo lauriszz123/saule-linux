@@ -47,7 +47,7 @@
 # cpio qemu-system-x86 busybox-static, plus
 # `rustup target add x86_64-unknown-linux-musl`. busybox-static is the
 # command-line tools (TOOLS=1, the default) and the DEBUG=1 shell. A stick
-# also needs GRUB (grub2-common grub-pc-bin grub-efi-amd64-bin) and, for its
+# also needs GRUB (grub-common grub-pc-bin grub-efi-amd64-bin) and, for its
 # FAT partition, dosfstools and mtools: scripts/mkgrub.sh fetches for itself
 # whichever aren't installed. EFI=1 needs UEFI firmware for QEMU (ovmf).
 
@@ -219,10 +219,34 @@ endif
 ifeq ($(HOST_OS),Darwin)
 
 # APP must be inside this repo or ../saule-wm: only those, ../saule and
-# ../saule-shine reach the container, and the apps in APPS beside the repo
-# (`../saule-linux-apps/settings`), which scripts/docker.sh mounts.
-all kernel init session initramfs test menuconfig check-config:
-	scripts/docker.sh make $@ DEBUG=$(DEBUG) TOOLS=$(TOOLS) APP=$(APP) APPS="$(APPS)" KERNEL_VERSION=$(KERNEL_VERSION)
+# ../saule-shine reach the container, and the repositories of the apps in
+# APPS beside the repo (`../saule-linux-apps` for
+# `../saule-linux-apps/settings`), which scripts/docker.sh mounts.
+#
+# The stick (usb-image, and run-usb's), the installer, the driver packs and
+# update files are made there too, and what QEMU or a person needs of them
+# is copied to out/ beside the kernel: out/saule-linux.img and the update
+# file. Writing a stick (`make usb`) is the Mac's own business: see `usb`
+# below.
+#
+# Those targets' settings are passed on only when given here (`make
+# usb-image BOOT_OPTIONS=…`), so the container's own defaults stand
+# otherwise: PACKS, for one, is what the container's build/drivers holds.
+FORWARD := USB_IMAGE BOOT_OPTIONS STICK_OPTIONS DRIVERS PACKS UPDATE_KEY WIFI BLUETOOTH
+FORWARDED = $(foreach v,$(FORWARD),$(if $(filter command line,$(origin $(v))),$(v)="$($(v))"))
+
+all kernel init session initramfs test menuconfig check-config \
+installer usb-image update update-key drivers:
+	scripts/docker.sh make $@ DEBUG=$(DEBUG) TOOLS=$(TOOLS) APP=$(APP) APPS="$(APPS)" KERNEL_VERSION=$(KERNEL_VERSION) $(FORWARDED)
+
+# No stick is written from the container, which sees none. On a Mac,
+# balenaEtcher writes out/saule-linux.img, or dd to the stick's raw device.
+usb:
+	@echo "On a Mac, write out/saule-linux.img (make usb-image) with balenaEtcher, or:" >&2
+	@echo "  diskutil list                      # the stick is /dev/diskN" >&2
+	@echo "  diskutil unmountDisk /dev/diskN" >&2
+	@echo "  sudo dd if=out/saule-linux.img of=/dev/rdiskN bs=4m   # erases the stick" >&2
+	@exit 1
 
 clean distclean:
 	scripts/docker.sh make $@
@@ -443,13 +467,15 @@ run-netbook: all
 # out, so after installing, shut down and `make run-disk`.
 DISK ?= disks/netbook.qcow2
 QEMU_USB_IMAGE    := $(BUILD)/saule-linux-qemu.img
+# Where QEMU finds it: on a Mac, the copy scripts/docker.sh makes in out/.
+QEMU_USB_FILE     := $(if $(filter Darwin,$(HOST_OS)),out/$(notdir $(QEMU_USB_IMAGE)),$(QEMU_USB_IMAGE))
 QEMU_BOOT_OPTIONS := console=ttyS0 console=tty1 video=Virtual-1:1024x600 \
                      $(if $(WSL_DISTRO_NAME),saule.env.SAULE_WM_KEY=ctrl+alt) $(APPEND)
 EFI ?=
 NETBOOK_EFI := $(if $(filter 1 yes,$(EFI)),--efi)
 run-usb:
 	$(MAKE) usb-image USB_IMAGE=$(QEMU_USB_IMAGE) BOOT_OPTIONS="$(strip $(QEMU_BOOT_OPTIONS))"
-	QEMU=$(QEMU) scripts/qemu-netbook.sh --usb $(QEMU_USB_IMAGE) --disk $(DISK) \
+	QEMU=$(QEMU) scripts/qemu-netbook.sh --usb $(QEMU_USB_FILE) --disk $(DISK) \
 		--memory $(MEMORY) $(NETBOOK_SLOW) $(NETBOOK_GL) $(NETBOOK_EFI)
 
 # The QEMU netbook started from its hard disk alone, as it starts once

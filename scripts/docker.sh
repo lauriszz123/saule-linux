@@ -9,8 +9,8 @@
 # Usage:
 #   docker.sh make [TARGET...] [VAR=value...]
 #       build saule (from SAULE_SRC) and Shine (from SHINE_SRC), then run
-#       make inside the container; the kernel and initramfs are copied to
-#       out/ for QEMU on the host
+#       make inside the container; the kernel, the initramfs, the USB sticks
+#       and update files it made are copied to out/ for QEMU and the host
 #   docker.sh shell
 #       a shell in the container, in the repo
 #   docker.sh run COMMAND...
@@ -25,9 +25,11 @@
 #               Cargo.lock is left alone.
 #
 # An app in APPS= that lives beside this repo rather than in it
-# (`../saule-linux-apps/settings`) is mounted read-only at the same place
-# relative to the repo, so the path means the same in the container, and so
-# does any path dependency it has on a sibling (`../saule-wm/api`).
+# (`../saule-linux-apps/settings`) has the repository it is in mounted
+# read-only at the same place relative to this one, so the path means the
+# same in the container, and so does any path dependency it has: on another
+# folder of its repository (`../lib/fileskit`) or on a sibling repository
+# mounted anyway (`../saule-wm/api`).
 #
 # What lives where:
 #   the repo (and SAULE_SRC)   bind-mounted from the host: edits are shared
@@ -58,16 +60,25 @@ if [ -d "$WM_SRC" ]; then
     wm=(-v "$(cd "$WM_SRC" && pwd):/src/saule-wm:ro")
 fi
 
-# Apps outside the repo, from the APPS= among the arguments.
+# The repositories of the apps outside this one, from the APPS= among the
+# arguments: each once, and none already mounted above. Mounting an app's
+# folder alone would hide what it shares with the rest of its repository.
 apps=()
+mounted=" saule "
+[ ${#shine[@]} -gt 0 ] && mounted="${mounted}saule-shine "
+[ ${#wm[@]} -gt 0 ] && mounted="${mounted}saule-wm "
 for arg in "$@"; do
     case $arg in
         APPS=*)
             for app in ${arg#APPS=}; do
                 case $app in
                     ../*)
-                        host=$(cd "$repo/$app" && pwd) || exit 1
-                        apps+=(-v "$host:/src/${app#../}:ro")
+                        top=${app#../}
+                        top=${top%%/*}
+                        case $mounted in *" $top "*) continue ;; esac
+                        host=$(cd "$repo/../$top" && pwd) || exit 1
+                        apps+=(-v "$host:/src/$top:ro")
+                        mounted="$mounted$top "
                         ;;
                 esac
             done
@@ -140,9 +151,15 @@ case $cmd in
                 cp /target/release/libsaule_shine.so "$SAULE_HOME/native_packages/"
             fi
             make SAULE=/target/release/saule INIT=/target/x86_64-unknown-linux-musl/release/saule-init "$@"
+            # What the Mac runs or hands on: the kernel and initramfs for
+            # QEMU, the sticks (usb-image, run-usb) and update files. Each
+            # only when newer than the copy there, a stick being large.
             mkdir -p out
-            for f in build/kernel/arch/x86/boot/bzImage build/initramfs.cpio.gz; do
-                [ -f "$f" ] && cp -p "$f" out/
+            for f in build/kernel/arch/x86/boot/bzImage build/initramfs.cpio.gz \
+                build/saule-linux.img build/saule-linux-qemu.img build/saule-linux-*.update; do
+                if [ -f "$f" ] && [ "$f" -nt "out/${f##*/}" ]; then
+                    cp -p "$f" out/
+                fi
             done
             true
         ' bash "$@"

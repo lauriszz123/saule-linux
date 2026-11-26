@@ -58,8 +58,8 @@ Then:
 | `make TOOLS=0 …` | leave out the command-line tools (BusyBox in `/usr/bin`, there by default for a terminal app's shell) |
 | `make APPEND="saule.on_exit=restart" run` | pass kernel command line options |
 | `make apps` | build only the apps, into `build/apps`: what the window manager opens when it runs nested on a desktop |
-| `make usb-image` | `build/saule-linux.img`, a USB stick as a file: see [Installing](#installing) |
-| `make usb DEVICE=/dev/sdX` | write that image to a stick (as root; the stick is erased) |
+| `make usb-image` | `build/saule-linux.img`, a USB stick as a file: see [Installing](#installing). On a Mac it is made in the container and copied to `out/saule-linux.img` |
+| `make usb DEVICE=/dev/sdX` | write that image to a stick (as root; the stick is erased). Not on a Mac, where it says how: balenaEtcher, or `dd` to the stick's `/dev/rdiskN` |
 | `make run-usb` | the QEMU netbook started from the stick, into the installer. `DISK=file.qcow2` gives it a disk to practise on instead of `disks/netbook.qcow2` |
 | `make run-disk` | the QEMU netbook started from its hard disk alone: what the installer put there |
 | `make update` | a signed update file for systems already installed (see [Updating](#updating)) |
@@ -496,6 +496,9 @@ scripts/
                          pack, the installer
   stage.sh               what those two share
   fetch-wifi.sh          wpa_supplicant and the radios' firmware, gathered
+  fetch-debs.sh          a package and what it needs that the build machine
+                         lacks, unpacked, never installed: what the fetch
+                         scripts and mkgrub.sh take from apt
   fetch-graphics-firmware.sh  what Intel's graphics chips load (their
                          display's power states), gathered
   mkgrub.sh              GRUB for a BIOS and for UEFI, as the files a disk

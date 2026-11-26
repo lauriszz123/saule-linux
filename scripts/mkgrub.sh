@@ -26,10 +26,11 @@
 # UEFI firmware with Secure Boot on refuses this GRUB, which nobody has
 # signed: Secure Boot has to be turned off in the firmware's settings.
 #
-# Needs GRUB's tools and modules (grub2-common, grub-pc-bin,
+# Needs GRUB's tools and modules (grub-common, grub-pc-bin,
 # grub-efi-amd64-bin) and, for the FAT file system, dosfstools and mtools.
-# Whatever is missing is fetched with `apt-get download` and unpacked under
-# TOOLS (default build/tools/grub): nothing is installed, no root is needed.
+# Whatever is missing is fetched by fetch-debs.sh, with the packages it
+# depends on, and unpacked under TOOLS (default build/tools/grub): nothing
+# is installed, no root is needed.
 
 set -euo pipefail
 
@@ -48,17 +49,8 @@ find_file() {
     local file=$1
     shift
     if [ ! -e "/$file" ] && [ ! -e "$tools/$file" ]; then
-        command -v apt-get >/dev/null && command -v dpkg-deb >/dev/null || {
-            echo "mkgrub.sh: /$file not found (apt install $*)" >&2
-            exit 1
-        }
         echo "mkgrub.sh: no /$file on this machine; fetching $* into $tools" >&2
-        mkdir -p "$tools/packages"
-        (cd "$tools/packages" && apt-get download -q "$@" >/dev/null)
-        local package
-        for package in "$tools"/packages/*.deb; do
-            dpkg-deb -x "$package" "$tools"
-        done
+        "$(dirname "$0")/fetch-debs.sh" "$tools/packages" "$tools" "$@"
     fi
     if [ -e "/$file" ]; then
         echo "/$file"
@@ -67,12 +59,17 @@ find_file() {
     fi
 }
 
-mkimage=$(find_file usr/bin/grub-mkimage grub2-common)
+mkimage=$(find_file usr/bin/grub-mkimage grub-common)
 bios=$(dirname "$(find_file usr/lib/grub/i386-pc/boot.img grub-pc-bin)")
 efi=$(dirname "$(find_file usr/lib/grub/x86_64-efi/normal.mod grub-efi-amd64-bin)")
 mkfs_fat=$(find_file usr/sbin/mkfs.fat dosfstools)
 mcopy=$(find_file usr/bin/mcopy mtools)
 mmd=$(find_file usr/bin/mmd mtools)
+
+# A program fetched into TOOLS loads the libraries fetched with it (the
+# device mapper's, for grub-mkimage). Only what this machine lacks was
+# fetched, so its own programs find nothing there to load instead of theirs.
+export LD_LIBRARY_PATH="$tools/usr/lib/x86_64-linux-gnu:$tools/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # `(,msdos1)`: the first partition of whichever disk GRUB was loaded from.
 prefix='(,msdos1)/grub'
