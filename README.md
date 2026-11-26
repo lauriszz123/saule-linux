@@ -50,7 +50,7 @@ Then:
 | `make run-vnc` | the same, served over VNC on 127.0.0.1:5901 (password `saule`, `VNC_PASSWORD=…` to change it) for a viewer that scales it to its window; on a Mac it opens Screen Sharing, where the launcher is Cmd+D |
 | `make run-netbook` | boot in QEMU dressed as the HP Mini 210-1001sa (N450, 1 GB, SeaBIOS, 1024×600, a 250 GB SATA hard disk, USB 2.0, PS/2, a USB tablet as the pointer), with KVM when available: `scripts/qemu-netbook.sh`. The disk is `disks/netbook.qcow2`, made empty on the first run and kept: see [Storage](#storage). On a Mac, in QEMU's own window at the netbook's size, one netbook pixel to a point (QEMU runs from a non-Retina copy of itself, `build/qemu-netbook.app`) |
 | `make SLOW=1 run-netbook` | the same at about the netbook's speed: KVM capped at 8% of one core (an estimate; `SLOW=12` sets another percentage). Calibrate with `examples/bench` |
-| `make GL=1 run-netbook` | the same with a 3D virtual GPU, so the window manager draws on the GPU. Needs the `virtual` driver pack: `make drivers` builds it once (meson, ninja, python3-mako and python3-yaml on the host) |
+| `make GL=0 run-netbook` | the same with no 3D in its virtual GPU, so the system draws on its processor. Otherwise the GPU has 3D wherever this machine's QEMU can do it, and the window manager draws on this machine's GPU: on Linux and under WSL with QEMU's OpenGL modules (`qemu-system-modules-opengl` on Debian and Ubuntu); not with Homebrew's QEMU on a Mac, which is built without OpenGL. The script says which it is as it starts. Needs the `virtual` driver pack: `make drivers` builds it once (meson, ninja, python3-mako and python3-yaml on the host) |
 | `make MEMORY=2G run-netbook` | the netbook with its memory upgraded |
 | `make run-vesa` | the netbook with no graphics driver: the screen the BIOS set up, as a chip with no driver would show |
 | `make DEBUG=1 run` | add BusyBox at `/bin`: a shell when the session ends |
@@ -375,11 +375,13 @@ without them, and the system then types as a US keyboard and offers no
 other.
 
 The QEMU netbook has a network cable plugged in (`NET=0` takes its card
-out), and `make STICK=stick.img run-netbook` plugs in a USB stick with that
-disk image as its contents. QEMU has no radio, no lid, no battery and no
-backlight, so Wi-Fi, Bluetooth, the battery and brightness are seen only on
-real hardware; and its default graphics card comes back from sleep with a
-blank screen (the real ones restore theirs).
+out), its sound is played through this machine's sound system (PipeWire or
+PulseAudio on Linux, WSLg's under WSL, Core Audio on a Mac; `SOUND=0`
+throws it away), and `make STICK=stick.img run-netbook` plugs in a USB
+stick with that disk image as its contents. QEMU has no radio, no lid, no
+battery and no backlight, so Wi-Fi, Bluetooth, the battery and brightness
+are seen only on real hardware; and its graphics card comes back from sleep
+with a blank screen (the real ones restore theirs).
 
 ## Storage
 

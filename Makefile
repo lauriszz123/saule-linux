@@ -7,7 +7,7 @@
 #   make run-gui      boot it in a QEMU window (the screen the display server
 #                     will draw on)
 #   make run-netbook  boot it in QEMU dressed as the HP Mini 210-1001sa
-#                     (SLOW=1: at about its speed; GL=1: with a 3D GPU;
+#                     (SLOW=1: at about its speed; GL=0: without a 3D GPU;
 #                     MEMORY=2G: with its memory upgraded). Its hard disk
 #                     is disks/netbook.qcow2, kept between runs
 #   make run-vesa     the same with no graphics driver: the BIOS's VESA
@@ -447,8 +447,12 @@ run-vnc: all
 #   SLOW=1     about the netbook's speed (KVM capped at 8% of a core);
 #   SLOW=12    the same with another percentage, while calibrating
 #   MEMORY=2G  RAM, for a netbook with its memory upgraded
-#   GL=1       the virtual GPU with 3D, for drawing on the GPU (the
-#              `virtual` driver pack)
+#   GL=0       the virtual GPU without 3D: the system draws on its
+#              processor. Otherwise with 3D wherever this machine's QEMU
+#              can, for drawing on the GPU (the `virtual` driver pack);
+#              GL=1 insists, and fails where it can't
+#   SOUND=0    the sound thrown away: it is played through this machine's
+#              sound system otherwise
 #   NET=0      no network card: the netbook's port has a cable in
 #              otherwise (QEMU's Intel card, the nearest to its Atheros)
 #   STICK=f    a USB stick plugged in, with disk image f as its contents
@@ -458,10 +462,12 @@ run-vnc: all
 SLOW   ?=
 MEMORY ?= 1G
 GL     ?=
+SOUND  ?= 1
 NETBOOK_SLOW := $(if $(filter 1 yes,$(SLOW)),--slow,$(if $(SLOW),--slow=$(SLOW)))
 NET    ?= 1
 STICK  ?=
-NETBOOK_GL   := $(if $(filter 1 yes,$(GL)),--gl) $(if $(filter 1 yes,$(NET)),--net) \
+NETBOOK_GL   := $(if $(filter 1 yes,$(GL)),--gl) $(if $(filter 0 no,$(GL)),--no-gl) \
+                $(if $(filter 0 no,$(NET)),--no-net) $(if $(filter 0 no,$(SOUND)),--no-sound) \
                 $(if $(STICK),--stick $(STICK))
 run-netbook: all
 	QEMU=$(QEMU) scripts/qemu-netbook.sh --kernel $(BZIMAGE) --initrd $(INITRAMFS) \

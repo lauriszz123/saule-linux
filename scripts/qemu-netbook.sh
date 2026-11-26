@@ -24,19 +24,28 @@
 #                    an empty 250 GB disk that takes up only what is
 #                    written to it (default: disks/netbook.qcow2)
 #   --no-disk        no hard disk, as a machine with its drive taken out
-#   --gl             the virtual GPU with 3D: the guest's OpenGL (Mesa's virgl,
-#                    from the `virtual` driver pack) runs on this machine's
-#                    GPU, the nearest QEMU comes to the netbook's GMA 3150
+#   --gl, --no-gl    the virtual GPU with 3D, or without: with it the
+#                    guest's OpenGL (Mesa's virgl, from the `virtual` driver
+#                    pack) runs on this machine's GPU, the nearest QEMU
+#                    comes to the netbook's GMA 3150; without it the guest
+#                    draws on its processor. Neither given, it is with 3D
+#                    wherever this machine's QEMU can (see "What this
+#                    machine's QEMU can do" below), and without where it
+#                    can't, saying which it is and why
+#   --no-sound       the sound thrown away. Otherwise it is played, and the
+#                    microphone heard, through this machine's own sound
+#                    system, where QEMU has a way to it
 #   --stick IMAGE    a USB stick plugged in, IMAGE as its contents (a disk
 #                    image file: one with a FAT partition reads as an
 #                    ordinary stick): what Files lists under Locations and
 #                    a report (Mod+Shift+R) is written to. Unlike --usb's,
 #                    it is not started from
-#   --net            a network cable: an Ethernet card on QEMU's own little
+#   --no-net         no network card. Otherwise the netbook's port has a
+#                    cable in: an Ethernet card on QEMU's own little
 #                    network, which hands out an address and reaches the
 #                    Internet through this machine. The netbook's card is
 #                    Atheros's; this one is Intel's (e1000e), the nearest
-#                    QEMU has
+#                    QEMU has. (--net, which this once took, is accepted.)
 #   --efi            UEFI firmware (OVMF) in place of the BIOS. Not the
 #                    netbook, which has no EFI: a newer PC, most of which
 #                    have nothing else. What is checked is that the stick
@@ -72,10 +81,29 @@
 #   PS/2 keyboard, Synaptics pad    PS/2 keyboard + PS/2 mouse (the touchpad
 #                                     shows up as a plain mouse), and a USB
 #                                     tablet as the pointer on the desktop
-#   HD Audio                        intel-hda + hda-duplex (sound discarded)
-#   Atheros LAN, Broadcom Wi-Fi     no network, or with --net an Intel
-#                                     Ethernet card with its cable in; no
-#                                     Wi-Fi: QEMU has no radio
+#   HD Audio                        intel-hda + hda-duplex, played through
+#                                     this machine's sound system
+#   Atheros LAN, Broadcom Wi-Fi     an Intel Ethernet card with its cable
+#                                     in; no Wi-Fi: QEMU has no radio
+#   Bluetooth, battery, lid,        none of them: QEMU has no such devices
+#     backlight, webcam
+#
+# What this machine's QEMU can do. The 3D card and the sound are taken from
+# what the QEMU here says it has (`-device help`, `-audiodev help`), not
+# from which system this is, so a QEMU that gains one starts using it:
+#
+#   Linux, and WSL   3D through the window's own OpenGL (SDL), where QEMU
+#                    was built with it (Debian and Ubuntu: the
+#                    qemu-system-modules-opengl package). Under WSL that is
+#                    Windows' GPU, through Mesa's D3D12 driver. Sound
+#                    through PipeWire or PulseAudio (WSLg's, under WSL).
+#   macOS            sound through Core Audio. 3D only with a QEMU built
+#                    with OpenGL for its Cocoa window, which Homebrew's is
+#                    not: there the guest draws on its processor, and the
+#                    script says so.
+#   Windows          through WSL, as above: the build needs Linux anyway.
+#   without a window (--nographic, or `-display none` after `--`): no 3D
+#                    unless --gl asks, and no sound.
 #
 # Speed: with KVM (Linux, /dev/kvm writable — be in the `kvm` group) the
 # guest runs on the real CPU, much faster than the netbook. Without it (a
@@ -102,7 +130,10 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 
 # What the options set. `append` grows as the machine is put together:
 # several parts of it need a kernel option of their own.
-usb= stick= kernel= initrd= append= nographic=0 bios_log= kvm=1 slow= memory=1G vesa=0 gl=0 efi=0 net=0
+usb= stick= kernel= initrd= append= nographic=0 bios_log= kvm=1 slow= memory=1G vesa=0 efi=0
+# The 3D card: 1 or 0 as asked, `auto` to go by what this machine can do.
+# And the sound and the network cable, there unless turned off.
+gl=auto sound=1 net=1
 disk=$repo/disks/netbook.qcow2
 extra=()     # everything after `--`, for QEMU as it is
 args=()      # QEMU's command line
@@ -129,9 +160,12 @@ parse_options() {
             --no-kvm)    kvm=0;                                    shift ;;
             --vesa)      vesa=1;                                   shift ;;
             --gl)        gl=1;                                     shift ;;
+            --no-gl)     gl=0;                                     shift ;;
+            --no-sound)  sound=0;                                  shift ;;
             --efi)       efi=1;                                    shift ;;
             --stick)     stick=${2:?--stick needs an image};        shift 2 ;;
             --net)       net=1;                                    shift ;;
+            --no-net)    net=0;                                    shift ;;
             --disk)      disk=${2:?--disk needs an image file};    shift 2 ;;
             --no-disk)   disk=;                                    shift ;;
             --slow)      slow=8;                                   shift ;;
@@ -178,6 +212,88 @@ check_slow() {
 }
 
 # ---------------------------------------------------------------------------
+# What this machine's QEMU can do
+# ---------------------------------------------------------------------------
+
+# Whether the machine is shown in a window of QEMU's own choosing here:
+# not with --nographic, nor when a display was named after `--`.
+windowed() {
+    [ "$nographic" = 0 ] || return 1
+    case " ${extra[*]:-} " in
+        *" -display "* | *" -nographic "*) return 1 ;;
+    esac
+}
+
+# Settle `gl` when it was left to this machine: with 3D where QEMU has the
+# card and a window to draw it through, without otherwise, and a line
+# either way, since a guest drawing on its processor looks the same and is
+# several times slower.
+choose_gl() {
+    [ "$gl" = auto ] || return 0
+    gl=0
+    [ "$vesa" = 0 ] || return 0
+    if ! windowed; then
+        return 0
+    fi
+    # Read whole before it is searched: a search that stopped at the first
+    # match would end QEMU's listing early, which `pipefail` calls failing.
+    local devices
+    devices=$("$QEMU" -device help 2>/dev/null || true)
+    if [[ "$devices" != *'"virtio-vga-gl"'* ]]; then
+        echo "qemu-netbook.sh: this QEMU has no 3D graphics card (virtio-vga-gl), so the" \
+             "system inside draws on its processor. $(gl_advice)" >&2
+        return 0
+    fi
+    gl=1
+    echo "qemu-netbook.sh: 3D graphics card, drawn through this machine's GPU (--no-gl for none)" >&2
+}
+
+# How this machine would get a QEMU with the 3D card.
+gl_advice() {
+    case $(uname -s) in
+        Darwin) echo "Homebrew's QEMU is built without OpenGL; one built with it (-display cocoa,gl=es) is used when it is the qemu-system-x86_64 found." ;;
+        *)      echo "On Debian and Ubuntu: apt install qemu-system-modules-opengl." ;;
+    esac
+}
+
+# The way to this machine's sound system that the QEMU here has, for
+# -audiodev; `none`, which throws the sound away, when it has no way, when
+# there is no window (a machine nobody is looking at stays quiet), or with
+# --no-sound.
+sound_backend() {
+    local have wanted=() backend
+    if [ "$sound" = 0 ] || ! windowed; then
+        echo none
+        return
+    fi
+    have=$("$QEMU" -audiodev help 2>/dev/null || true)
+    case $(uname -s) in
+        Darwin)
+            wanted=(coreaudio sdl) ;;
+        *)
+            # PipeWire and PulseAudio only where one is running: QEMU
+            # stops at a server it can't reach. WSLg's is PulseAudio.
+            if [ -S "${XDG_RUNTIME_DIR:-/nonexistent}/pipewire-0" ]; then
+                wanted+=(pipewire)
+            fi
+            if [ -n "${PULSE_SERVER:-}" ] || [ -S "${XDG_RUNTIME_DIR:-/nonexistent}/pulse/native" ]; then
+                wanted+=(pa)
+            fi
+            wanted+=(sdl alsa) ;;
+    esac
+    for backend in "${wanted[@]}"; do
+        # A name on a line of its own.
+        case $'\n'"$have"$'\n' in
+            *$'\n'"$backend"$'\n'*)
+                echo "$backend"
+                return ;;
+        esac
+    done
+    echo "qemu-netbook.sh: this QEMU has no way to this machine's sound system; the sound is thrown away" >&2
+    echo none
+}
+
+# ---------------------------------------------------------------------------
 # The machine
 # ---------------------------------------------------------------------------
 
@@ -221,8 +337,8 @@ add_machine() {
         -device qemu-xhci,id=xhci
         -device usb-tablet,bus=xhci.0
 
-        # HD Audio, with the sound thrown away.
-        -audiodev none,id=snd
+        # HD Audio, played through this machine's sound system.
+        -audiodev "$(sound_backend),id=snd"
         -device intel-hda
         -device hda-duplex,audiodev=snd
 
@@ -437,7 +553,13 @@ PLIST
         codesign --force --sign - "$copy" >/dev/null 2>&1
     fi
     QEMU=$copy
-    args+=(-L "$(dirname "$real")/../share/qemu" -display cocoa,full-grab=on)
+    # With the 3D card, the window draws it through OpenGL ES (ANGLE, on
+    # Metal), the one way the QEMUs that have it at all are steady.
+    local gl_display=
+    if [ "$gl" = 1 ]; then
+        gl_display=",gl=es"
+    fi
+    args+=(-L "$(dirname "$real")/../share/qemu" -display "cocoa,full-grab=on$gl_display")
 }
 
 # ---------------------------------------------------------------------------
@@ -490,6 +612,7 @@ run() {
 
 parse_options "$@"
 check_options
+choose_gl
 add_machine
 add_firmware
 add_screen
