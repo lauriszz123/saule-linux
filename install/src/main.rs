@@ -83,7 +83,7 @@ fn main() -> ExitCode {
         ["driver"] => {
             let mut list = String::new();
             let _ = std::io::stdin().read_to_string(&mut list);
-            match drivers::pack_for(&list, &drivers::chips()) {
+            match drivers::pack_for(&list, &drivers::chips(), |_| true) {
                 Some(pack) => println!("{pack}"),
                 None => println!("none"),
             }

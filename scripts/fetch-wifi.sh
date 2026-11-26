@@ -38,6 +38,8 @@ intel/iwlwifi/iwlwifi-3168-29.ucode   3afae7bf4bb5fbb83a895ec7ad097b9fd20b7d8794
 intel/iwlwifi/iwlwifi-8000C-36.ucode  479931721f5e168d69d67c297c11738acd75da390adb94f96030a1055f4cf57a
 intel/iwlwifi/iwlwifi-8265-36.ucode   1336afcd028ed094d1fe33893c84c273bb5711be52970040344a75a12f276d56
 LICENSES/LICENCE.iwlwifi_firmware     16d5040c7cf851fc693b7542e20870935b99802533ea1bfd231c377a2305e5c5
+brcm/bcm43xx-0.fw                     24668c702e723d2b1caebda047ee975ce16d7edf23788bc447dc12bcaf246b0f
+brcm/bcm43xx_hdr-0.fw                 4aaa2ba62983d64b65f351908c59062a8a7c99100d190904c0e780d7c30f0dd0
 "
 
 mkdir -p "$out/dl" "$out/lib/firmware" "$out/lib/extra" "$out/sbin"
@@ -55,7 +57,11 @@ echo "$firmware" | while read -r path sum; do
         echo "fetch-wifi.sh: $out/dl/$name is not the file expected" >&2
         exit 1
     }
-    install -m 0644 "$out/dl/$name" "$out/lib/firmware/$name"
+    # Broadcom's driver looks for its files in a folder of their own.
+    case $path in
+        brcm/*) install -D -m 0644 "$out/dl/$name" "$out/lib/firmware/brcm/$name" ;;
+        *) install -m 0644 "$out/dl/$name" "$out/lib/firmware/$name" ;;
+    esac
 done
 
 # wpa_supplicant, and the one library of its that a machine without it
@@ -92,6 +98,65 @@ ldd "$supplicant" 2>/dev/null | awk '/not found/ { print $1 }' | while read -r l
         exit 1
     }
     install -m 0755 "$found" "$out/lib/extra/$library"
+done
+
+# Broadcom's cards before the BCM4313 (the BCM4312 of the HP Mini 210, and
+# the 43xx of a decade of laptops): the kernel's b43 driver loads firmware
+# that is in no repository, because Broadcom never allowed it to be passed
+# on. It is cut out of Broadcom's own driver instead, as distributions'
+# installers do on the machine they install to: the driver's archive is
+# fetched, and b43-fwcutter takes the files out of it. An image with them
+# in is for the machine it was built for, not for handing out. `B43=0`
+# leaves them out.
+b43_archive=broadcom-wl-5.100.138.tar.bz2
+b43_url=https://sources.openwrt.org/$b43_archive
+b43_sum=f1e7067aac5b62b67b8b6e4c517990277804339ac16065eb13c731ff909ae46f
+if [ "${B43:-1}" != 0 ] && [ ! -f "$out/lib/firmware/b43/ucode15.fw" ]; then
+    cutter=$(command -v b43-fwcutter || true)
+    if [ -z "$cutter" ]; then
+        mkdir -p "$out/packages"
+        (cd "$out/packages" && apt-get download -q b43-fwcutter >/dev/null)
+        for package in "$out"/packages/b43-fwcutter*.deb; do
+            dpkg-deb -x "$package" "$out/tools"
+        done
+        cutter=$out/tools/usr/bin/b43-fwcutter
+    fi
+    if [ ! -f "$out/dl/$b43_archive" ]; then
+        curl -fsSL "$b43_url" -o "$out/dl/$b43_archive.part"
+        mv -f "$out/dl/$b43_archive.part" "$out/dl/$b43_archive"
+    fi
+    echo "$b43_sum  $out/dl/$b43_archive" | sha256sum -c --quiet - || {
+        echo "fetch-wifi.sh: $out/dl/$b43_archive is not the file expected" >&2
+        exit 1
+    }
+    rm -rf "$out/b43-src"
+    mkdir -p "$out/b43-src"
+    tar -xjf "$out/dl/$b43_archive" -C "$out/b43-src"
+    "$cutter" -w "$out/lib/firmware" "$out/b43-src/broadcom-wl-5.100.138/linux/wl_apsta.o" >/dev/null
+    rm -rf "$out/b43-src"
+fi
+
+# Which channels and how much power each country allows: the kernel reads
+# it (and its signature) as a radio starts, and without it keeps to what
+# is allowed everywhere, which leaves out channels 12 and 13 that Europe's
+# networks use. From the wireless-regdb repository, at a tag.
+regdb_url=https://git.kernel.org/pub/scm/linux/kernel/git/wens/wireless-regdb.git/plain
+regdb_tag=master-2026-09-03
+regdb="
+regulatory.db      7e236caecd939c8ec98be4870bf30422f28ffef2565a38aaaa2d9ddabd0c2641
+regulatory.db.p7s  50332f0db09b8bcc719235ec4985c27377f2cc2f42abb7b5dcf951866c5a888a
+"
+echo "$regdb" | while read -r name sum; do
+    [ -n "$name" ] || continue
+    if [ ! -f "$out/dl/$name" ]; then
+        curl -fsSL "$regdb_url/$name?h=$regdb_tag" -o "$out/dl/$name.part"
+        mv -f "$out/dl/$name.part" "$out/dl/$name"
+    fi
+    echo "$sum  $out/dl/$name" | sha256sum -c --quiet - || {
+        echo "fetch-wifi.sh: $out/dl/$name is not the file expected" >&2
+        exit 1
+    }
+    install -m 0644 "$out/dl/$name" "$out/lib/firmware/$name"
 done
 
 echo "wifi: $out ($(du -sh "$out/lib/firmware" | cut -f1) of firmware)"

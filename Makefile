@@ -103,6 +103,12 @@ USB_IMAGE ?= $(BUILD)/saule-linux.img
 # The kernel options the stick starts with and hands on to the system it
 # installs.
 BOOT_OPTIONS ?= quiet
+# More for the stick alone, not for what it installs. While the system is
+# being brought up on real machines, the stick's own session notes where
+# its frames spend their time and which way they are shown (Shine's
+# traces, a line every two seconds for each program): a report made
+# from it (Mod+Shift+R) then says what is slow.
+STICK_OPTIONS ?= saule.env.SHINE_TRACE_FRAMES=1 saule.env.SHINE_TRACE_PRESENT=1
 # The graphics driver packs the stick carries: every one that is built
 # (`make drivers DRIVERS=gen3`). The installer gives a machine the one its
 # chip needs (config/drivers.list).
@@ -147,6 +153,12 @@ SYSTEM := system/target/x86_64-unknown-linux-musl/release/saule-system
 # for.
 WIFI     ?= 1
 WIFI_DIR := $(if $(filter 1,$(WIFI)),$(BUILD)/wifi)
+# What Intel's graphics chips load when they start
+# (scripts/fetch-graphics-firmware.sh), and the list PCI devices are
+# named from (the pci.ids package), of which the graphics chips' makers
+# are kept.
+GRAPHICS_FIRMWARE := $(BUILD)/graphics-firmware
+PCI_IDS ?= $(wildcard /usr/share/misc/pci.ids)
 # Bluetooth: BlueZ, a D-Bus daemon for it and Intel's radios' firmware,
 # gathered by scripts/fetch-bluetooth.sh into build/bluetooth.
 # BLUETOOTH=0 leaves them out.
@@ -162,6 +174,10 @@ ZONEINFO    ?= $(wildcard /usr/share/zoneinfo)
 XKB         ?= $(wildcard /usr/share/X11/xkb)
 FONTS       ?= $(wildcard /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
                           /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)
+# Where each font's common part is made (scripts/common-fonts.sh): the
+# few hundred characters most text is made of, which is all a program
+# reads of a font as it starts.
+FONTS_COMMON ?= $(BUILD)/fonts
 
 # KVM when this user may use it (members of the `kvm` group may), plain
 # emulation otherwise.
@@ -254,6 +270,8 @@ init:
 	cd system && cargo build --release --target x86_64-unknown-linux-musl
 	$(if $(WIFI_DIR),scripts/fetch-wifi.sh $(WIFI_DIR))
 	$(if $(BLUETOOTH_DIR),scripts/fetch-bluetooth.sh $(BLUETOOTH_DIR))
+	scripts/fetch-graphics-firmware.sh $(GRAPHICS_FIRMWARE)
+	$(if $(FONTS),scripts/common-fonts.sh $(FONTS_COMMON) $(FONTS))
 
 test:
 	cd init && cargo test
@@ -296,9 +314,10 @@ initramfs: init session apps $(GEN_CPIO)
 	@test "$(TOOLS)" != 1 -o -n "$(BUSYBOX)" || { echo "TOOLS=1 needs busybox (apt install busybox-static) or BUSYBOX=/path; TOOLS=0 builds without"; exit 1; }
 	STAGE=$(BUILD)/rootfs GEN_INIT_CPIO=$(GEN_CPIO) INIT=$(INIT) SESSION=$(SESSION) \
 	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) APPS_DIR=$(APPS_OUT) \
-	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" DRIVERS_DIR="$(DRIVERS_DIR)" \
+	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" FONTS_COMMON="$(FONTS_COMMON)" DRIVERS_DIR="$(DRIVERS_DIR)" \
 	FS_TOOLS="$(FS_TOOLS)" ZONEINFO="$(ZONEINFO)" \
 	SYSTEM="$(SYSTEM)" WIFI="$(WIFI_DIR)" ALSA="$(ALSA)" XKB="$(XKB)" \
+	GRAPHICS_FIRMWARE="$(GRAPHICS_FIRMWARE)" PCI_IDS="$(PCI_IDS)" \
 	BLUETOOTH="$(BLUETOOTH_DIR)" INSTALL_TOOL="$(INSTALL_TOOL)" VERSION="$(SYSTEM_VERSION)" \
 	WALLPAPERS="$(wildcard $(WM)/wallpapers)" scripts/mkinitramfs.sh $(INITRAMFS)
 
@@ -341,7 +360,7 @@ usb-image: kernel installer $(GEN_CPIO)
 	done
 	cp config/drivers.list $(USB)/root/drivers.list
 	echo "$(BOOT_OPTIONS)" > $(USB)/root/cmdline
-	$(INSTALL_HOST) config "$(BOOT_OPTIONS) saule.installer=1" /installer.cpio.gz > $(USB)/root/grub/grub.cfg
+	$(INSTALL_HOST) config "$(BOOT_OPTIONS) $(STICK_OPTIONS) saule.installer=1" /installer.cpio.gz > $(USB)/root/grub/grub.cfg
 	$(INSTALL_HOST) image $(USB_IMAGE) $(USB)/root --efi $(USB)/efi.img
 
 # An update file for systems already installed: the same kernel,

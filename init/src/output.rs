@@ -1,11 +1,11 @@
-//! What the session prints, on every console.
+//! What the session prints: on every console, and kept.
 //!
-//! With more than one console — the screen and a serial line, as QEMU and
-//! a debugging setup have — the session runs on the screen's terminal, and
-//! a session that draws covers that terminal: its errors, the one thing
-//! needed when it fails, were on a console nobody could read. So its output
-//! goes through a pipe that init copies to every console. With one console
-//! it writes to its terminal directly, and there is no pipe.
+//! A session that draws covers the terminal it runs on, and with more
+//! than one console (the screen and a serial line, as QEMU and a debugging
+//! setup have) its errors, the one thing needed when it fails, would be on
+//! a console nobody could read. So its output goes through a pipe that
+//! init copies to every console, and to a file ([`KEPT`]) that a report
+//! of what went wrong is made from.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -19,13 +19,8 @@ pub struct Output {
 }
 
 impl Output {
-    /// A pipe to `consoles` when there is more than one of them, `None`
-    /// when the session's own terminal is the only console.
+    /// A pipe to `consoles`, however many there are, and to the file.
     pub fn for_consoles(consoles: Vec<String>) -> std::io::Result<Option<Output>> {
-        if consoles.len() < 2 {
-            return Ok(None);
-        }
-
         let mut fds = [0; 2];
         // Close-on-exec: the session gets the write end as its stdout and
         // stderr (`dup2` clears the flag on those), and nothing else it
@@ -73,6 +68,7 @@ impl Output {
             .collect();
 
         std::thread::spawn(move || {
+            let mut kept = Kept::open();
             let mut buffer = [0u8; 4096];
             loop {
                 match pipe.read(&mut buffer) {
@@ -81,11 +77,50 @@ impl Output {
                         for console in &mut consoles {
                             let _ = console.write_all(&buffer[..n]);
                         }
+                        kept.write(&buffer[..n]);
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(_) => break,
                 }
             }
         });
+    }
+}
+
+/// Where what the session writes is kept as well, for a report of what
+/// went wrong (saule-system's `report`): the consoles are behind the
+/// desktop, and scroll away.
+pub const KEPT: &str = "/run/saule/session.log";
+
+/// The most of it kept, in bytes. Past that the file is set aside as
+/// `session.log.old` (replacing the one before) and begun again, so the
+/// latest half a megabyte or more is always there and memory, which is
+/// where `/run` is, is not filled.
+const KEPT_BYTES: usize = 512 * 1024;
+
+struct Kept {
+    file: Option<File>,
+    written: usize,
+}
+
+impl Kept {
+    fn open() -> Kept {
+        let _ = std::fs::create_dir_all("/run/saule");
+        Kept {
+            file: File::create(KEPT).ok(),
+            written: 0,
+        }
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        if self.written + bytes.len() > KEPT_BYTES {
+            let _ = std::fs::rename(KEPT, format!("{KEPT}.old"));
+            self.file = File::create(KEPT).ok();
+            self.written = 0;
+        }
+        if let Some(file) = &mut self.file {
+            let _ = file.write_all(bytes);
+            self.written += bytes.len();
+        }
     }
 }

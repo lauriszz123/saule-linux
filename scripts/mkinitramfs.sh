@@ -33,6 +33,8 @@
 #                  (mkoverlay.sh), and the installer takes the machine's
 #   FONTS          optional: font files, installed at the same path as on
 #                  the build host (where Shine looks for them)
+#   FONTS_COMMON   optional: a directory of the fonts' common parts
+#                  (scripts/common-fonts.sh), installed beside them
 #   WALLPAPERS     optional: a directory of wallpaper photographs (the
 #                  window manager's wallpapers/), installed in
 #                  /usr/share/saule/wallpapers
@@ -48,6 +50,13 @@
 #                  /usr/share/zoneinfo), installed at the same path: what
 #                  init tells a zone's time by, and the list of zones the
 #                  first-start setup offers
+#   GRAPHICS_FIRMWARE  optional: a directory holding what Intel's graphics
+#                  chips load when they start
+#                  (scripts/fetch-graphics-firmware.sh)
+#   PCI_IDS        optional: the list of what PCI devices are called
+#                  (the pci.ids package's /usr/share/misc/pci.ids). The
+#                  makers of graphics chips are kept of it, installed at
+#                  the same path: how Settings names the machine's chips
 #   INSTALL_TOOL   optional: saule-install (../install), installed as
 #                  /sbin/saule-install: an installed system applies
 #                  updates with it
@@ -111,8 +120,15 @@ for tool in $FS_TOOLS; do
     add_program "$tool" "/sbin/$(basename "$tool")"
 done
 
+# Each font, and beside it its common part where one was made
+# (scripts/common-fonts.sh): what a program reads as it starts.
 for font in $FONTS; do
     install -D -m 0644 "$font" "$STAGE$font"
+    name=$(basename "$font")
+    part="${FONTS_COMMON:-}/${name%.*}.common.${name##*.}"
+    if [ -n "${FONTS_COMMON:-}" ] && [ -f "$part" ]; then
+        install -D -m 0644 "$part" "$STAGE$(dirname "$font")/$(basename "$part")"
+    fi
 done
 
 if [ -n "${WALLPAPERS:-}" ] && [ -d "$WALLPAPERS" ]; then
@@ -125,6 +141,25 @@ fi
 if [ -n "${SYSTEM:-}" ] && [ -f "$SYSTEM" ]; then
     add_program "$SYSTEM" /sbin/saule-system
     install -D -m 0755 "$(dirname "$0")/../system/dhcp" "$STAGE/usr/share/saule/dhcp"
+fi
+
+# What Intel's graphics chips load, and the names of graphics chips: of
+# the list of every PCI device there is, the makers of graphics chips
+# and their devices, without the lines for each board a chip was sold on.
+if [ -n "${GRAPHICS_FIRMWARE:-}" ] && [ -d "$GRAPHICS_FIRMWARE/lib/firmware" ]; then
+    mkdir -p "$STAGE/lib/firmware"
+    cp -a "$GRAPHICS_FIRMWARE/lib/firmware/." "$STAGE/lib/firmware/"
+fi
+if [ -n "${PCI_IDS:-}" ] && [ -f "$PCI_IDS" ]; then
+    mkdir -p "$STAGE/usr/share/misc"
+    awk -v keep="8086 10de 1002 1af4 1234 15ad 80ee 1b36" '
+        BEGIN { n = split(keep, k, " "); for (i = 1; i <= n; i++) want[k[i]] = 1 }
+        /^#/ || /^$/ { next }
+        /^C / { done = 1 }
+        done { next }
+        /^[0-9a-f][0-9a-f][0-9a-f][0-9a-f]  / { inside = ($1 in want); if (inside) print; next }
+        /^\t[0-9a-f]/ { if (inside) print }
+    ' "$PCI_IDS" >"$STAGE/usr/share/misc/pci.ids"
 fi
 
 # What applies an update, and which version this is.

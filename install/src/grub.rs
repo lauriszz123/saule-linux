@@ -149,9 +149,16 @@ pub fn write_efi(
 /// over it, which is how a machine gets the one graphics driver pack it
 /// needs. Paths are on the partition GRUB was started from.
 ///
-/// No menu and no wait: there is one thing to boot. `gfxpayload` has GRUB
-/// leave the screen in a graphics mode, which is all a kernel with no
-/// driver for the machine's graphics chip has to draw on.
+/// The system starts by itself after a second in which nothing is shown.
+/// Esc pressed (or Shift held) in that second brings up a menu with a
+/// second way to start: with the processor drawing everything
+/// (`SHINE_GPU=0`), for a graphics chip whose driver misbehaves. And a
+/// third, a trial: with programs drawing on the graphics chip as the
+/// desktop does (`SHINE_GPU_DRAW=1`) on the old Intel chips where Shine
+/// has them draw on the processor, to see on such a machine whether its
+/// programs run, and faster.
+/// `gfxpayload` has GRUB leave the screen in a graphics mode, which is all
+/// a kernel with no driver for the machine's graphics chip has to draw on.
 pub fn config(options: &str, overlays: &[String]) -> String {
     let mut initrd = String::from("/initramfs.cpio.gz");
     for overlay in overlays {
@@ -160,10 +167,26 @@ pub fn config(options: &str, overlays: &[String]) -> String {
     }
     let options = options.trim();
     let space = if options.is_empty() { "" } else { " " };
+    let entry = |title: &str, more: &str| {
+        format!(
+            "menuentry \"{title}\" {{\n    linux /vmlinuz{space}{options}{more}\n    initrd {initrd}\n}}\n"
+        )
+    };
     format!(
-        "set timeout=0\nset gfxpayload=auto\nlinux /vmlinuz{space}{options}\ninitrd {initrd}\nboot\n"
+        "set timeout_style=hidden\nset timeout=1\nset default=0\nset gfxpayload=auto\n{}{}{}",
+        entry("Saule Linux", ""),
+        entry(SAFE_TITLE, SAFE_OPTIONS),
+        entry(TRIAL_TITLE, TRIAL_OPTIONS),
     )
 }
+
+/// The menu's second entry, and what it adds to the kernel's options.
+const SAFE_TITLE: &str = "Saule Linux, drawn by the processor (safe graphics)";
+const SAFE_OPTIONS: &str = " saule.env.SHINE_GPU=0";
+
+/// The third, and what it adds.
+const TRIAL_TITLE: &str = "Saule Linux, programs drawn by the graphics chip (trial)";
+const TRIAL_OPTIONS: &str = " saule.env.SHINE_GPU_DRAW=1";
 
 #[cfg(test)]
 mod tests {
@@ -289,14 +312,19 @@ mod tests {
     }
 
     #[test]
-    fn the_configuration_boots_one_thing_at_once() {
+    fn the_configuration_starts_the_system_and_offers_safe_graphics() {
         assert_eq!(
             config("quiet", &[]),
-            "set timeout=0\nset gfxpayload=auto\nlinux /vmlinuz quiet\ninitrd /initramfs.cpio.gz\nboot\n"
+            "set timeout_style=hidden\nset timeout=1\nset default=0\nset gfxpayload=auto\n\
+             menuentry \"Saule Linux\" {\n    linux /vmlinuz quiet\n    initrd /initramfs.cpio.gz\n}\n\
+             menuentry \"Saule Linux, drawn by the processor (safe graphics)\" {\n    \
+             linux /vmlinuz quiet saule.env.SHINE_GPU=0\n    initrd /initramfs.cpio.gz\n}\n\
+             menuentry \"Saule Linux, programs drawn by the graphics chip (trial)\" {\n    \
+             linux /vmlinuz quiet saule.env.SHINE_GPU_DRAW=1\n    initrd /initramfs.cpio.gz\n}\n"
         );
-        assert_eq!(
-            config("", &["/drivers/gen3.cpio.gz".into()]),
-            "set timeout=0\nset gfxpayload=auto\nlinux /vmlinuz\ninitrd /initramfs.cpio.gz /drivers/gen3.cpio.gz\nboot\n"
-        );
+        let with_pack = config("", &["/drivers/gen3.cpio.gz".into()]);
+        assert!(with_pack
+            .contains("    linux /vmlinuz\n    initrd /initramfs.cpio.gz /drivers/gen3.cpio.gz\n"));
+        assert!(with_pack.contains("    linux /vmlinuz saule.env.SHINE_GPU=0\n"));
     }
 }

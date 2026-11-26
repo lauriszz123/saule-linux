@@ -36,11 +36,21 @@ struct Mounted {
     kind: String,
 }
 
+/// How many looks a partition that will not mount is tried at.
+const TRIES: u8 = 3;
+
 #[derive(Default)]
 struct State {
     mounted: HashMap<String, Mounted>,
     /// Ejected, and still plugged in: not to be mounted again.
     ejected: HashSet<String>,
+    /// Partitions that would not mount as anything known (a partition of
+    /// another system's, one with no file system), and how many times
+    /// each was tried: after [`TRIES`], not again while it stays plugged
+    /// in. Asking every look fills the kernel's log with each file
+    /// system's refusal; asking a few times allows for a drive that is
+    /// not ready the moment it appears.
+    refused: HashMap<String, u8>,
 }
 
 #[derive(Clone)]
@@ -101,9 +111,16 @@ impl Disks {
             }
         }
         state.ejected.retain(|device| present.contains(device));
+        state.refused.retain(|device, _| present.contains(device));
 
         for device in &present {
-            if state.mounted.contains_key(device) || state.ejected.contains(device) {
+            if state.mounted.contains_key(device)
+                || state.ejected.contains(device)
+                || state
+                    .refused
+                    .get(device)
+                    .is_some_and(|tries| *tries >= TRIES)
+            {
                 continue;
             }
             let told = describe(device);
@@ -122,6 +139,8 @@ impl Disks {
                         kind,
                     },
                 );
+            } else {
+                *state.refused.entry(device.clone()).or_default() += 1;
             }
         }
 

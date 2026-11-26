@@ -206,6 +206,21 @@ with no pack is drawn for on the CPU, and a chip the kernel has no driver
 for at all (it has Intel's, and a virtual machine's) on the screen as GRUB
 left it: slower, and at the size the firmware chose, but there.
 
+A machine with two graphics chips (a laptop's own and an NVIDIA or AMD
+card beside it) is asked about the chip its screen is on first
+(`boot_vga`), and a chip whose pack was not built is passed over for the
+next: such a laptop runs on its Intel chip, and the card beside it, for
+which there is no driver here, is left alone.
+
+**When graphics misbehave.** GRUB waits a second showing nothing; Esc in
+that second (or Shift held) brings up its menu, whose second entry starts
+the system with the processor drawing everything (`SHINE_GPU=0`). And
+whatever does not work, Mod+Shift+R (or Settings, under About) writes
+**a report** to the USB drive plugged in: every PCI and USB device with
+its ids and the driver that took it, what draws the screen, what the
+kernel said, and what the session and its apps printed, which init keeps
+in `/run/saule/session.log` (`system/src/report.rs`).
+
 Three packs are built so far: `gen3` (the netbook's GMA 3150), `intel`
 (every Intel chip from 2006's GMA X3000 to 2023's Meteor Lake) and `virtual`
 (QEMU's). `make drivers DRIVERS=intel` builds one; the stick takes every
@@ -337,7 +352,14 @@ What it does:
   over its control socket: the networks in range, joining one, the ones
   known (kept on the data disk). The radios' firmware files and
   `wpa_supplicant` itself are gathered by `scripts/fetch-wifi.sh`; `WIFI=0`
-  leaves them out of the image.
+  leaves them out of the image. The kernel has Intel's radios, Atheros'
+  (ath9k), Broadcom's BCM4313 and 43224/5 (brcmsmac) and Broadcom's older
+  cards (b43: the HP Mini 210-1000's BCM4312). The older cards' firmware is
+  in no repository, Broadcom never having allowed it to be passed on: it
+  is cut out of Broadcom's own driver as the image is built
+  (`b43-fwcutter`, as distributions' installers do), which makes that
+  image one for its builder's machines and not for handing out. `B43=0`
+  leaves it out.
 
 **The keys with pictures on them.** Volume up, down and mute, brightness
 up and down, sleep and the power button arrive as keys among the input
@@ -474,6 +496,8 @@ scripts/
                          pack, the installer
   stage.sh               what those two share
   fetch-wifi.sh          wpa_supplicant and the radios' firmware, gathered
+  fetch-graphics-firmware.sh  what Intel's graphics chips load (their
+                         display's power states), gathered
   mkgrub.sh              GRUB for a BIOS and for UEFI, as the files a disk
                          boots with
   patches/               changes made to Mesa, each saying why

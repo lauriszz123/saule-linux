@@ -202,8 +202,9 @@ pub fn live_drivers() -> io::Result<()> {
     };
 
     let list = fs::read_to_string(medium.path().join("drivers.list")).unwrap_or_default();
-    let pack = drivers::pack_for(&list, &drivers::chips())
-        .filter(|pack| medium.path().join(overlay(pack)).is_file());
+    let pack = drivers::pack_for(&list, &drivers::chips(), |pack| {
+        medium.path().join(overlay(pack)).is_file()
+    });
     let Some(pack) = pack else {
         say("none");
         return Ok(());
@@ -363,8 +364,9 @@ impl System {
         }
 
         let list = fs::read_to_string(medium.join("drivers.list")).unwrap_or_default();
-        let pack = drivers::pack_for(&list, &drivers::chips())
-            .filter(|pack| medium.join(overlay(pack)).is_file());
+        let pack = drivers::pack_for(&list, &drivers::chips(), |pack| {
+            medium.join(overlay(pack)).is_file()
+        });
         if let Some(pack) = &pack {
             files.push(overlay(pack));
         }
@@ -480,7 +482,7 @@ mod tests {
         // Not the stick's, which starts the installer.
         assert_eq!(
             fs::read_to_string(target.join("grub/grub.cfg")).unwrap(),
-            "set timeout=0\nset gfxpayload=auto\nlinux /vmlinuz quiet console=tty1\ninitrd /initramfs.cpio.gz\nboot\n"
+            grub::config("quiet console=tty1", &[])
         );
 
         fs::remove_dir_all(medium).unwrap();

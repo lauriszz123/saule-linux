@@ -21,6 +21,7 @@
 //!   clock
 //!   bluetooth
 //!   update
+//!   report
 //!
 //! Files rather than a socket because a Saule program can read and write
 //! them with nothing but `Io`, and because how things stand is then there
@@ -38,6 +39,8 @@
 //!                            (`disks.rs`)
 //!   clock sync               ask a time server the time now (`clock.rs`)
 //!   update PATH              install the update in that file (`update.rs`)
+//!   report NOTES             write a report of the machine to every drive
+//!                            plugged in (`report.rs`)
 //!   bluetooth on|off|scan    the radio, and looking for devices
 //!   bluetooth pair|connect|disconnect|forget ADDRESS   (`bluetooth.rs`)
 //!   unlock PASSWORD          is this the person's password? (`login.rs`)
@@ -59,6 +62,7 @@ mod files;
 mod login;
 mod network;
 mod power;
+mod report;
 mod requests;
 mod sound;
 mod update;
@@ -82,6 +86,7 @@ fn main() {
     let clock = clock::start();
     let bluetooth = bluetooth::start();
     let update = update::start();
+    let mut report = report::start();
     let mut login = login::start();
     let wifi = wifi::start();
     network::start(wifi.clone());
@@ -97,6 +102,7 @@ fn main() {
             "clock" => clock.ask(rest),
             "bluetooth" => bluetooth.ask(rest),
             "update" => update.ask(rest),
+            "report" => report.ask(rest),
             "unlock" | "password" | "person" => login.ask(word, rest),
             "wifi" => wifi.ask(rest),
             _ => eprintln!("saule-system: unknown request `{word}`"),

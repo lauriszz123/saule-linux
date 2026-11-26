@@ -83,9 +83,22 @@ QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
         resolution (Shine's `Window.setScale`; apps drawn at the same
         scale, pixel for pixel);
   - [ ] installing beside Windows instead of over it.
-- [ ] **On the real netbook**: nothing here has run on it yet. The stick
-      booting from its BIOS, the `gen3` driver pack on its GMA 3150 (built
-      without LLVM: `scripts/patches/`), the touchpad.
+- [ ] **On the real netbook** (an HP Mini 210-1000): the stick boots from
+      its BIOS, the desktop comes up, apps open, the battery, the lid, the
+      backlight, the touchpad and Bluetooth's radio are found. From its
+      report (Mod+Shift+R):
+  - [ ] its GMA 3150 was not drawn on: Mesa's i915 turned down four of
+        Shine's six shaders (too many instructions and rounds of texture
+        reads, a branch, a loop). They are compiled in small variants now,
+        and the blur is a shader of uikit's, five reads a pass; every one
+        links against the driver with no chip present
+        (`build/testing/gen3check`). To be seen on the machine;
+  - [x] drawn by the processor, motions only fade, and a full-screen
+        fade no longer goes pixel by pixel through the sampled path
+        (0.27 s a frame, now 0.04);
+  - [ ] its Wi-Fi card is a BCM4312 (14e4:4315): b43 and its firmware
+        added, to be tried;
+  - [ ] its webcam has no driver (USB video class is not built).
 - [ ] **Other machines**: none has been tried on either. What is there for
       them, all of it unproven on the hardware it is for:
   - [x] the `intel` driver pack, for every Intel chip from Gen4 to Meteor
@@ -297,8 +310,11 @@ What the display server needs from Rust. Everything above it is Saule.
 - [x] Move, resize, stacking order and zoom.
   - [ ] minimise: the button is drawn, and there is nowhere yet for a
         window to go.
-- [ ] Tiled windows remember their place when a window floats and comes
-      back.
+- [x] Tiled windows remember their place when a window floats and comes
+      back, and the whole layout comes back from windowed mode
+      (saule-wm's `Home`).
+- [x] Windows come, go and make room with a motion (`WindowMotion`), and
+      a window switcher on Mod+Tab (`Switcher`).
 
 ## Phase 7: apps 🌙
 
