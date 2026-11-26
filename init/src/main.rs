@@ -11,7 +11,8 @@
 //!    `saule build` — as the unprivileged `display` account, with the screen
 //!    and input devices handed to it (`seat.rs`), and keep it going;
 //!    and beside it the programs that do what it may ask for but not do
-//!    itself (`services.rs`);
+//!    itself (`services.rs`), and the apps it asks for, which run as the
+//!    person's account and not its own (`launcher.rs`, `person.rs`);
 //! 4. reap every orphaned process (PID 1 inherits them all);
 //! 5. power off or reboot cleanly when asked.
 //!
@@ -33,6 +34,7 @@ mod account;
 mod cmdline;
 mod console;
 mod installer;
+mod launcher;
 mod log;
 mod mounts;
 mod output;
@@ -66,7 +68,7 @@ fn main() {
     power::install_signal_handlers();
     seat::start();
 
-    let mut cmdline = Cmdline::read();
+    let cmdline = Cmdline::read();
     set_hostname();
     log::banner();
     // From the stick, the disks are the installer's to decide about: a
@@ -76,11 +78,20 @@ fn main() {
     } else {
         storage::mount_data();
         system::start();
-        // The session's account is called after whoever the machine is
-        // for, before anything looks it up by name.
-        if cmdline.user == cmdline::USER {
-            cmdline.user = person::adopt(cmdline::USER);
-        }
+    }
+    // The person's account is called after whoever the machine is for,
+    // before anything looks it up by name; and a home it once shared with
+    // the session's account is made its own.
+    let person = if cmdline.installer {
+        person::ACCOUNT.to_string()
+    } else {
+        person::adopt(person::ACCOUNT)
+    };
+    if let (Some(person), Some(session)) = (
+        account::Account::find(&person),
+        account::Account::find(cmdline::USER),
+    ) {
+        person::settle(&person, &session);
     }
 
     // From the stick the session is the installer's, as root; what is
@@ -90,7 +101,8 @@ fn main() {
     } else {
         cmdline.user.as_str()
     };
-    services::start(account);
+    services::start(account, &person);
+    launcher::start(&person, &cmdline.env);
 
     session::supervise(&cmdline);
 }

@@ -74,6 +74,9 @@ fn main() {
     if owner.is_none() {
         eprintln!("saule-system: no account `{account}`: nobody can ask anything");
     }
+    // Whose the machine is, when that is another account than the one
+    // that asks: the person's, whose apps read and write the drives.
+    let person = std::env::args().nth(2).and_then(|name| account::ids(&name));
 
     if let Err(error) = files::prepare(owner) {
         eprintln!("saule-system: could not make {}: {error}", files::FOLDER);
@@ -82,7 +85,7 @@ fn main() {
 
     let sound = sound::start();
     let backlight = backlight::start();
-    let disks = disks::start(owner);
+    let disks = disks::start(person.or(owner));
     let clock = clock::start();
     let bluetooth = bluetooth::start();
     let update = update::start();

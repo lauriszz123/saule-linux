@@ -88,6 +88,9 @@ gets used.
      root) with a clean environment (`HOME=/data/home/display` on the
      data disk, `/home/display` in memory without one;
      `XDG_RUNTIME_DIR=/run/user/100`). See [Security](#security);
+   - starts the apps the session asks for, as the person's account and
+     not the session's (`init/src/launcher.rs`). See
+     [Security](#security);
    - with more than one console (`console=ttyS0 console=tty1`, as
      `make run-gui` boots), copies what the session and its apps print to
      all of them, so a session that covers the screen with its drawing still
@@ -275,14 +278,18 @@ There is one person to a computer. Who they are and what is kept of their
 password are files in `/data/account`, which is root's:
 
 - `name`, which anyone can read;
-- `user`, the short name their account goes by. The image has one
-  ordinary account, `display`; at each start init renames it to this
-  (`init/src/person.rs`: the same user and group numbers under another
-  name, in `/etc/passwd` and `/etc/group`), so the home is
-  `/data/home/ada`, a terminal's prompt says `ada`, and no `display` is
-  left on an installed system. A home kept under the old name is moved.
-  Started from the stick, the installer runs as root and *Try It First*
-  as `display`: neither is on the disk;
+- `user`, the short name their account goes by. The image has two
+  ordinary accounts: `display`, which the window manager runs as, and
+  `user`, the person's, which every app runs as. At each start init
+  renames `user` to this (`init/src/person.rs`: the same user and group
+  numbers under another name, in `/etc/passwd` and `/etc/group`), so the
+  home is `/data/home/ada` and a terminal's prompt says `ada`. A home
+  kept under the old name is moved. A system installed when the two were
+  one account has one home for both: at its first start under this init
+  that home becomes the person's, every file in it, and the window
+  manager's settings go to `/data/home/display`. Started from the stick,
+  the installer runs as root and *Try It First* as `display`, with its
+  apps as `user`: none is on the disk;
 - `password`, which only root can. It holds no password but what
   `password/` makes of one: PBKDF2 with HMAC-SHA-256, salted, 60 000
   rounds, as a line that also says how it was made, so the rounds can be
@@ -410,8 +417,12 @@ which init (`init/src/storage.rs`) mounts at `/data`:
 With a data disk the session's home is `/data/home/display`, and it gets
 `SAULE_DATA=/data`. The window manager keeps its settings in
 `~/.config/saule/wm.conf`, so they survive a restart; Settings → Storage
-shows the disks and what is on them. Without one everything works as
-before and nothing is kept.
+shows the disks and what is on them. The person's home is beside it,
+`/data/home/ada`: where their files are, and where apps start. The
+session's group may pass through it and write in its `Pictures`, where the
+window manager puts a picture of the screen; nothing else of it is the
+session's. Without a data disk everything works as before and nothing is
+kept.
 
 A machine can lose power at any moment, so the disk is treated that way:
 
@@ -448,14 +459,15 @@ init/                    PID 1 (Rust)
   src/storage.rs         the data disk: find it, or make it, and mount /data
   src/installer.rs       started from the stick: the driver pack, unpacked
   src/services.rs        the programs kept running beside the session
+  src/launcher.rs        the apps the session asks for, started as the person
   src/system.rs          the machine's name, time zone and clock, as chosen
   src/zone.rs            what a time zone is right now
   src/console.rs         the real terminal behind /dev/console (for Ctrl-C)
   src/session.rs         start the session, restart it, reap orphans
   src/output.rs          what the session prints, copied to every console
   src/account.rs         accounts from /etc/passwd, dropping root for the session
-  src/person.rs          the session's account, named after the person
-  src/seat.rs            screen and input devices to video/input, hotplug included
+  src/person.rs          the person's account, named after them, and its home
+  src/seat.rs            screen, input and sound devices to their groups, hotplug included
   src/power.rs           poweroff / reboot and the signals for them
   src/cmdline.rs         saule.* kernel options
   src/log.rs             init's own messages
@@ -533,10 +545,23 @@ disks/                   the emulated netbook's hard disk (not in git, and
 
 The plan follows macOS (see ROADMAP.md, "Security"). Today:
 
-- **Only init is root.** The session runs as an ordinary account (the person's; `display` until somebody is named), the way macOS runs
-  its WindowServer as `_windowserver`. It can use the screen and input
-  devices, through the `video` and `input` groups, and its own
-  home, but it can't write system files or read other accounts'.
+- **Only init is root.** The session runs as an ordinary account,
+  `display`, the way macOS runs its WindowServer as `_windowserver`. It
+  can use the screen and input devices, through the `video` and `input`
+  groups, and its own home, but it can't write system files or read other
+  accounts'.
+- **Apps are not the window manager's children.** It asks init for one
+  (a file dropped in `/run/saule/launcher/requests`, a folder that is its
+  account's alone, so the kernel says who is asking), and init starts it
+  as the person's account: in neither `video` nor `input`, so it can't
+  read the keyboard or the screen behind the window manager's back, and
+  with none of the window manager's open files or environment. Only a
+  program in `/bin/apps` is started. The apps reach the window manager
+  through its services, sockets in `/run/saule/services`: init lets the
+  person's account connect to them and nobody but the session publish
+  there. They draw with the graphics chip through its render device
+  (`render`), which shows nothing on any screen, and play sound
+  (`audio`).
 - **No way back to root:** the session starts with `no_new_privs`, so
   even a set-uid program can't raise it.
 - **It fails closed:** if the account is missing, the session doesn't start
@@ -547,8 +572,9 @@ The plan follows macOS (see ROADMAP.md, "Security"). Today:
   session can't open; the session asks whether a password is right and is
   told yes or no (see [Logging in](#logging-in)).
 
-Apps the window manager starts today run as `display` too. Separating them
-is the next step on the roadmap.
+Apps are not yet kept from one another, or from the person's files: every
+one runs as the person. A sandbox for each is the next step on the
+roadmap.
 
 ## The two layers
 

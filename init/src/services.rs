@@ -15,15 +15,18 @@ use crate::log;
 const SYSTEM: &str = "/sbin/saule-system";
 
 /// Start them, and keep them running. `account` is the session's: the one
-/// they take requests from.
-pub fn start(account: &str) {
+/// they take requests from. `person` is the person's: whose the drives
+/// plugged in are.
+pub fn start(account: &str, person: &str) {
     if !Path::new(SYSTEM).exists() {
         return;
     }
     let account = account.to_string();
+    let person = person.to_string();
     std::thread::spawn(move || loop {
         let child = Command::new(SYSTEM)
             .arg(&account)
+            .arg(&person)
             .stdin(Stdio::null())
             .spawn();
         let pid = match child {

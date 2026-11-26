@@ -4,11 +4,15 @@
 //! display server doesn't run as root, so init hands these to a group,
 //! mode 0660:
 //!
-//!   /dev/dri/*, /dev/fb*          → `video`  (drawing on the screen)
+//!   /dev/dri/card*, /dev/fb*      → `video`  (drawing on the screen)
+//!   /dev/dri/renderD*             → `render` (drawing with the graphics
+//!                                   chip, to nowhere anybody sees)
 //!   /dev/input/event*, mice, …    → `input`  (keyboard, mouse, touchpad)
 //!   /dev/snd/*                    → `audio`  (playing sound)
 //!
-//! and the account in those groups (`display`) can open them. Devices that
+//! and the accounts in those groups can open them: the session's,
+//! `display`, in all of them, and the person's, whose apps draw and play,
+//! in `render` and `audio`. Devices that
 //! appear later — a USB mouse plugged in — are fixed as the kernel announces
 //! them (a uevent), by a thread that does nothing else.
 
@@ -25,6 +29,11 @@ struct Rule {
 }
 
 const RULES: &[Rule] = &[
+    // Before the rest of `dri/`: the first rule that fits is the one.
+    Rule {
+        prefix: "dri/renderD",
+        group: "render",
+    },
     Rule {
         prefix: "dri/",
         group: "video",

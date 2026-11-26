@@ -1,27 +1,45 @@
-//! The session's account, named after the person the machine is for.
+//! The person's account: who the machine is for, and what apps run as.
 //!
-//! The image has one ordinary account, `display`, which the session runs
-//! as. The installer asks who the machine is for and writes a short name
-//! for them on the data disk (`/data/account/user`: `ada`), and from then
-//! on that is what the account is called: the home is `/data/home/ada`,
-//! and a terminal's prompt says `ada`.
+//! The image has two ordinary accounts. `display` is the session's: the
+//! window manager, in the groups the screen and the keyboard belong to.
+//! `user` is the person's: their files are its, and every app runs as it
+//! (`launcher.rs`), in none of those groups.
+//!
+//! The installer asks who the machine is for and writes a short name for
+//! them on the data disk (`/data/account/user`: `ada`), and from then on
+//! that is what the person's account is called: the home is
+//! `/data/home/ada`, and a terminal's prompt says `ada`.
 //!
 //! It is the same account under another name (the same user and group
 //! numbers), renamed where accounts are listed, `/etc/passwd` and
 //! `/etc/group`. Those are in memory, as the whole system is, so this is
-//! done at every start, before anything that looks an account up. A home
-//! kept under the old name is moved to the new one.
+//! done at every start, before anything that looks an account up.
 //!
 //! A machine nobody was named for (started from the stick, or installed
-//! before the installer asked) keeps `display`. One with a full name and
-//! no short one gets the full name run together in small letters, as a
-//! Mac makes one: "Ada Lovelace" is `adalovelace`.
+//! before the installer asked) keeps `user`. One with a full name and no
+//! short one gets the full name run together in small letters, as a Mac
+//! makes one: "Ada Lovelace" is `adalovelace`.
+//!
+//! Before apps had an account of their own, the session's was the
+//! person's too, and one home held the person's files and the window
+//! manager's settings alike. [`settle`] takes such a home apart, once.
 
 use std::fs;
-use std::path::Path;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 
+use crate::account::{self, Account};
 use crate::log;
 use crate::storage;
+
+/// What the person's account is called until it is named after them,
+/// and its number, which it keeps whatever it is called.
+pub const ACCOUNT: &str = "user";
+pub const UID: libc::uid_t = 1000;
+
+/// What the window manager keeps in its home: its settings, the one thing
+/// of a shared home that is the session's and not the person's.
+const SESSIONS_OWN: &str = ".config/saule/wm.conf";
 
 const PASSWD: &str = "/etc/passwd";
 const GROUP: &str = "/etc/group";
@@ -30,7 +48,7 @@ const GROUP: &str = "/etc/group";
 const LONGEST: usize = 32;
 
 /// Rename the account called `default` after the person, if the data disk
-/// names one. The name the session's account has from now on.
+/// names one. The name the person's account has from now on.
 pub fn adopt(default: &str) -> String {
     if !storage::mounted() {
         return default.to_string();
@@ -64,11 +82,12 @@ pub fn adopt(default: &str) -> String {
     };
     let group = renamed_in_group(&group, default, &wanted);
     if write(PASSWD, &passwd).is_err() || write(GROUP, &group).is_err() {
-        log::warn("could not rename the session's account");
+        log::warn("could not rename the person's account");
         return default.to_string();
     }
 
-    // Its home in memory, where caches go, and its home on the disk.
+    // Its home in memory, where caches go, and its home on the disk,
+    // when it has one under the name it had.
     let _ = fs::rename(
         Path::new("/home").join(default),
         Path::new("/home").join(&wanted),
@@ -87,6 +106,113 @@ pub fn adopt(default: &str) -> String {
 
     log::info(&format!("this machine is {wanted}'s"));
     wanted
+}
+
+/// Give the person a home of their own on the data disk, where the
+/// session's account and theirs shared one: a machine installed before
+/// apps ran as the person. Done once, as that system first starts under
+/// this init; a machine set up since has nothing to take apart.
+///
+/// The shared home was the session's account's, under the person's name
+/// or, where nobody was named, its own. It becomes the person's, every
+/// file in it, but for the window manager's settings, which go to the
+/// session's home.
+pub fn settle(person: &Account, session: &Account) {
+    if !storage::mounted() || person.uid == session.uid {
+        return;
+    }
+    let homes = Path::new(storage::MOUNT).join("home");
+    let moved = settle_in(&homes, &person.name, &session.name, session.uid, |home| {
+        hand_over(home, person.uid, person.gid);
+    });
+    if moved {
+        log::info(&format!(
+            "{}'s files are in a home of their own now",
+            person.name
+        ));
+    }
+}
+
+/// [`settle`], under `homes`: whether a shared home was taken apart.
+/// `hand_over` makes everything in the person's home theirs.
+fn settle_in(
+    homes: &Path,
+    person: &str,
+    session: &str,
+    session_uid: u32,
+    hand_over: impl FnOnce(&Path),
+) -> bool {
+    let (own, shared) = (homes.join(person), homes.join(session));
+    if !own.exists() {
+        // Nobody was named: the shared home is under the session's name.
+        // Else a new machine, whose homes have never been shared; made
+        // now, so that this is only ever asked once.
+        let made = if shared.is_dir() {
+            fs::rename(&shared, &own)
+        } else {
+            fs::create_dir_all(&own)
+        };
+        if let Err(error) = made {
+            log::warn(&format!("could not make {}: {error}", own.display()));
+            return false;
+        }
+    }
+    // The session's account's still: a home from before.
+    if !fs::metadata(&own).is_ok_and(|home| home.uid() == session_uid) {
+        return false;
+    }
+    let (kept, back) = (own.join(SESSIONS_OWN), shared.join(SESSIONS_OWN));
+    if kept.is_file() && !back.exists() {
+        if let Some(folder) = back.parent() {
+            let _ = fs::create_dir_all(folder);
+        }
+        let _ = fs::rename(&kept, &back);
+    }
+    hand_over(&own);
+    true
+}
+
+/// Make `path` and everything under it `uid`'s and `gid`'s. A link is
+/// handed over itself, not what it points at, which may be anywhere.
+fn hand_over(path: &Path, uid: u32, gid: u32) {
+    let _ = std::os::unix::fs::lchown(path, Some(uid), Some(gid));
+    let Ok(kind) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if kind.is_dir() {
+        for entry in fs::read_dir(path).into_iter().flatten().flatten() {
+            hand_over(&entry.path(), uid, gid);
+        }
+    }
+}
+
+/// Where the person's files are, ready for an app to start in: their home
+/// on the data disk when there is one, so what they keep outlives a
+/// reboot; else their home in memory.
+///
+/// `session_gid` is the session's group. It may pass through the home, no
+/// more, and write in `Pictures`: where the window manager, which is the
+/// one program that can see the screen, puts a picture of it.
+pub fn home_of(person: &Account, session_gid: Option<libc::gid_t>) -> PathBuf {
+    let home = storage::home_for(&person.name, person.uid, person.gid).unwrap_or_else(|| {
+        if person.home.is_dir() {
+            person.home.clone()
+        } else {
+            PathBuf::from("/")
+        }
+    });
+    if let Some(gid) = session_gid.filter(|_| home != Path::new("/")) {
+        let pictures = home.join("Pictures");
+        let _ = account::chown(&home, person.uid, gid);
+        let _ = account::chmod(&home, 0o710);
+        // Set-group: a picture made there is the group's, and stays where
+        // the person, whose folder it is, can read and remove it.
+        if fs::create_dir_all(&pictures).is_ok() {
+            let _ = account::chown(&pictures, person.uid, gid);
+            let _ = account::chmod(&pictures, 0o2770);
+        }
+    }
+    home
 }
 
 /// Written beside and renamed over: a reader sees the old list or the new.
@@ -211,6 +337,79 @@ fn renamed_in_group(group: &str, old: &str, new: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A folder of homes to try `settle_in` on, and this process's user,
+    /// which owns whatever is made there.
+    fn homes(name: &str) -> (PathBuf, u32) {
+        let homes = std::env::temp_dir().join(format!("saule-homes-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&homes);
+        fs::create_dir_all(&homes).unwrap();
+        let uid = fs::metadata(&homes).unwrap().uid();
+        (homes, uid)
+    }
+
+    fn put(path: PathBuf, text: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn a_home_shared_under_the_person_s_name_is_taken_apart() {
+        let (homes, me) = homes("named");
+        put(homes.join("ada/Documents/letter.txt"), "dear");
+        put(homes.join("ada/.config/saule/wm.conf"), "wallpaper");
+        put(homes.join("ada/.config/saule/editor.conf"), "font");
+
+        let handed = std::cell::Cell::new(false);
+        assert!(settle_in(&homes, "ada", "display", me, |home| {
+            assert_eq!(home, homes.join("ada"));
+            handed.set(true);
+        }));
+        assert!(handed.get());
+        // The person's files stay; the window manager's settings go to
+        // its own home.
+        assert!(homes.join("ada/Documents/letter.txt").is_file());
+        assert!(homes.join("ada/.config/saule/editor.conf").is_file());
+        assert!(!homes.join("ada/.config/saule/wm.conf").exists());
+        assert_eq!(
+            fs::read_to_string(homes.join("display/.config/saule/wm.conf")).unwrap(),
+            "wallpaper"
+        );
+        fs::remove_dir_all(homes).unwrap();
+    }
+
+    #[test]
+    fn a_home_shared_under_the_session_s_name_becomes_the_person_s() {
+        let (homes, me) = homes("unnamed");
+        put(homes.join("display/Pictures/shot.png"), "png");
+        put(homes.join("display/.config/saule/wm.conf"), "dock");
+
+        assert!(settle_in(&homes, "user", "display", me, |_| {}));
+        assert!(homes.join("user/Pictures/shot.png").is_file());
+        assert!(!homes.join("display/Pictures").exists());
+        assert_eq!(
+            fs::read_to_string(homes.join("display/.config/saule/wm.conf")).unwrap(),
+            "dock"
+        );
+        fs::remove_dir_all(homes).unwrap();
+    }
+
+    #[test]
+    fn homes_that_were_never_shared_are_left_alone() {
+        let (homes, me) = homes("new");
+        let not_me = me + 1;
+        // A new machine: the person's home is made, and nothing moved.
+        assert!(!settle_in(&homes, "ada", "display", not_me, |_| panic!()));
+        assert!(homes.join("ada").is_dir());
+        // The window manager has kept its settings since; the person's
+        // home is there, and theirs.
+        put(homes.join("display/.config/saule/wm.conf"), "dock");
+        put(homes.join("ada/notes.txt"), "mine");
+        assert!(!settle_in(&homes, "ada", "display", not_me, |_| panic!()));
+        assert!(homes.join("display/.config/saule/wm.conf").is_file());
+        assert!(homes.join("ada/notes.txt").is_file());
+        fs::remove_dir_all(homes).unwrap();
+    }
 
     const PASSWD: &str = "root:x:0:0:root:/root:/bin/sh\n\
                           display:x:100:100:display server:/home/display:/usr/bin/sh\n";

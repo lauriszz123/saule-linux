@@ -21,7 +21,7 @@ use crate::account::{self, Account, Switch};
 use crate::cmdline::{self, Cmdline, OnExit};
 use crate::output::Output;
 use crate::power::{self, Request};
-use crate::{console, log, storage, system};
+use crate::{console, launcher, log, person, storage, system};
 
 const SHELL: &str = "/bin/sh";
 
@@ -229,11 +229,25 @@ fn run(program: &str, args: &[&str], env: &[(String, String)], account: &Account
             return Outcome::NotStarted(error);
         }
     };
+    // The apps it asks for print where it does: through a write end of
+    // the launcher's own, taken before init lets go of this one.
+    if !account.is_root() {
+        // SAFETY: duplicates a descriptor that is open; the copy is
+        // closed on exec, as the original is.
+        let copy = write_end
+            .map(|fd| unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) })
+            .filter(|fd| *fd >= 0);
+        launcher::session_started(account, copy);
+    }
     if let Some(output) = output {
         output.copy_in_background();
     }
 
-    wait_for(child.id() as libc::pid_t)
+    let outcome = wait_for(child.id() as libc::pid_t);
+    if !account.is_root() {
+        launcher::session_ended();
+    }
+    outcome
 }
 
 /// `program` with the environment a session starts in: clean, but for who
@@ -261,6 +275,18 @@ fn command_for(
 
     if !account.is_root() {
         command.env("XDG_RUNTIME_DIR", account.runtime_dir());
+        // Its services, where its apps can reach them, and who to ask to
+        // start an app (`launcher.rs`).
+        command.env("SAULE_SERVICES_DIR", launcher::SERVICES);
+        command.env("SAULE_LAUNCHER", launcher::FOLDER);
+        // Whose machine it is: the session's own account is nobody's.
+        if let Some(person) = person_of_the_machine() {
+            command.env("SAULE_PERSON", &person.name);
+            command.env(
+                "SAULE_PERSON_HOME",
+                person::home_of(&person, Some(account.gid)),
+            );
+        }
     }
     if storage::mounted() {
         command.env("SAULE_DATA", storage::MOUNT);
@@ -281,6 +307,21 @@ fn command_for(
     command.envs(env.iter().map(|(name, value)| (name, value)));
 
     command
+}
+
+/// The person's account, as it is called now: the one account in
+/// `/etc/passwd` with the person's number.
+fn person_of_the_machine() -> Option<Account> {
+    let named = Account::find(person::ACCOUNT);
+    named.or_else(|| {
+        let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+        let uid = person::UID.to_string();
+        let name = passwd.lines().find_map(|line| {
+            let fields: Vec<&str> = line.split(':').collect();
+            (fields.get(2) == Some(&uid.as_str())).then(|| fields[0].to_string())
+        })?;
+        Account::find(&name)
+    })
 }
 
 /// Where `account` starts: its home on the data disk when there is one, so
@@ -321,6 +362,8 @@ fn wait_for(pid: libc::pid_t) -> Outcome {
         }
 
         if reaped != pid {
+            // An app, perhaps: the launcher says so to who asked for it.
+            launcher::reaped(reaped, status);
             continue;
         }
 

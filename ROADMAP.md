@@ -87,17 +87,20 @@ QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
       its BIOS, the desktop comes up, apps open, the battery, the lid, the
       backlight, the touchpad and Bluetooth's radio are found. From its
       report (Mod+Shift+R):
-  - [ ] its GMA 3150 was not drawn on: Mesa's i915 turned down four of
-        Shine's six shaders (too many instructions and rounds of texture
-        reads, a branch, a loop). They are compiled in small variants now,
-        and the blur is a shader of uikit's, five reads a pass; every one
-        links against the driver with no chip present
-        (`build/testing/gen3check`). To be seen on the machine;
+  - [x] its GMA 3150 draws the screen: the report says `i915 (chipset:
+        Pineview M)`. Mesa's i915 had turned down four of Shine's six
+        shaders (too many instructions and rounds of texture reads, a
+        branch, a loop). They are compiled in small variants now, and the
+        blur is a shader of uikit's, five reads a pass; every one links
+        against the driver with no chip present
+        (`build/testing/gen3check`). The window manager is drawn by the
+        chip; programs drawing on it too is still a trial, the third
+        entry in GRUB's menu;
   - [x] drawn by the processor, motions only fade, and a full-screen
         fade no longer goes pixel by pixel through the sampled path
         (0.27 s a frame, now 0.04);
-  - [ ] its Wi-Fi card is a BCM4312 (14e4:4315): b43 and its firmware
-        added, to be tried;
+  - [x] its Wi-Fi card is a BCM4312 (14e4:4315): b43 loads its firmware
+        and the card joins a network and stays on it;
   - [ ] its webcam has no driver (USB video class is not built).
 - [ ] **Other machines**: none has been tried on either. What is there for
       them, all of it unproven on the hardware it is for:
@@ -300,22 +303,25 @@ What the display server needs from Rust. Everything above it is Saule.
       gamemaker's theme.
 - [x] **Workspaces**.
 - [x] **Launcher**: start a Saule app as a client process.
-  - [ ] through init's launcher service once it exists (see Security,
-        step 2), not `Os.spawn`, so apps don't inherit the window
-        manager's access.
+  - [x] through init (see Security, step 2), not `Os.spawn`, so apps
+        don't inherit the window manager's access.
 - [x] **Milestone**: Saule Linux boots straight into the window manager.
 
 ## Phase 6: floating mode, switchable 🌙
 
 - [x] Floating windows, beside the tiled ones.
 - [x] Move, resize, stacking order and zoom.
-  - [ ] minimise: the button is drawn, and there is nowhere yet for a
-        window to go.
+  - [x] minimise: a window goes to the Dock, past its divider, and comes
+        back when clicked there (the button, the app menu, Mod+M).
 - [x] Tiled windows remember their place when a window floats and comes
       back, and the whole layout comes back from windowed mode
       (saule-wm's `Home`).
 - [x] Windows come, go and make room with a motion (`WindowMotion`), and
       a window switcher on Mod+Tab (`Switcher`).
+- [x] Left alone, the screen dims (the backlight turned down in steps,
+      and what is on it blurred a little) and then locks; how long each
+      takes, how dim, and whether to blur are chosen in Settings →
+      Displays.
 
 ## Phase 7: apps 🌙
 
@@ -376,11 +382,16 @@ Steps:
       Screen and input devices go to the `video` and `input` groups, fixed
       again on hotplug from the kernel's uevents (`init/src/seat.rs`). It
       refuses to start as root unless `saule.user=root` is passed.
-- [ ] **2. init launches apps** 🦀. init gets a `saule.launcher` service (an
-      `extern interface`), which only `display` may call: the kernel's peer
-      identity says who is calling. Apps run as `user` (uid 1000), with no
+- [x] **2. init launches apps** 🦀. The window manager asks init for an
+      app by a file dropped in a folder that is `display`'s alone
+      (`/run/saule/launcher/requests`), as `saule-system` is asked: the
+      folder's owner is the kernel's word for who is calling. Apps run as
+      the person's account (`user`, uid 1000, named after them), with no
       `video` or `input` group, so they can't read the keyboard behind the
-      window manager's back. The window manager's launcher calls it 🌙.
+      window manager's back; only what is in `/bin/apps` is started. The
+      window manager's services are opened to that account by init
+      (`init/src/launcher.rs`), and a home the two accounts once shared
+      is made the person's (`init/src/person.rs`).
 - [ ] **3. App sandbox** 🦀:
   - the kernel options: `SECURITY_LANDLOCK`, `SECCOMP_FILTER`, `NET_NS`;
   - each app is confined by Landlock to its bundle, its container and the
