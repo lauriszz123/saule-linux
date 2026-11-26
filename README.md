@@ -338,10 +338,18 @@ What it does:
   daemon is started, with a D-Bus daemon for it that only root may use,
   and asked through `bluetoothctl`: the radio, a search, pairing (a
   keyboard's digits are passed on to be shown), connecting. What was
-  paired is kept on the data disk. `scripts/fetch-bluetooth.sh` gathers
+  paired is kept on the data disk, and so is the radio having been turned
+  off, which it then stays when the machine next starts. Turning it on
+  lifts the kernel's own block on the radio (rfkill) first, which a
+  laptop's firmware remembers. `scripts/fetch-bluetooth.sh` gathers
   BlueZ, D-Bus and Intel's radios' firmware; `BLUETOOTH=0` leaves them
   out. For mice and keyboards: sound over Bluetooth needs a sound server
-  the system doesn't have. **None of it has met a radio**: QEMU has none.
+  the system doesn't have. QEMU has no radio; the kernel has one that is a
+  program (`/dev/vhci`), which BlueZ's `btvirt` (Ubuntu's
+  `bluez-test-tools`) plays when put in an image and started as root
+  before `saule-system`: with two of them, one finds, pairs with and
+  connects to the other. **No real device has been paired on a real
+  radio.**
 - **The screen's brightness**: a laptop's backlight
   (`/sys/class/backlight`), the firmware's before the laptop driver's
   before the graphics driver's. Never to nothing: the lowest is the
@@ -500,6 +508,8 @@ scripts/
   mkoverlay.sh           pack what is unpacked over it at boot: a driver
                          pack, the installer
   stage.sh               what those two share
+  check-libraries.sh     whether every program in the tree finds its
+                         libraries there: run on each image as it is made
   fetch-wifi.sh          wpa_supplicant and the radios' firmware, gathered
   fetch-debs.sh          a package and what it needs that the build machine
                          lacks, unpacked, never installed: what the fetch

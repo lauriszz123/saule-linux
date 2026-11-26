@@ -125,10 +125,11 @@ QEMU as the HP Mini 210-1001sa; `SLOW=1` runs it at about its speed).
         HP's own key drivers in the kernel). The volume keys have run in
         QEMU; nothing there has a backlight;
   - [ ] the key drivers of other makers (Lenovo's, ASUS's, Acer's);
-  - [x] Bluetooth, as far as it can be built without a radio to try it
-        on: the kernel's stack, BlueZ and a D-Bus daemon for it in the
-        image, radio, search, pairing and connecting from Settings
-        (`system/src/bluetooth.rs`). For mice and keyboards;
+  - [x] Bluetooth: the kernel's stack, BlueZ and a D-Bus daemon for it
+        in the image, radio, search, pairing and connecting from Settings
+        (`system/src/bluetooth.rs`). For mice and keyboards. Tried on the
+        kernel's radio that is a program (`/dev/vhci`, played by BlueZ's
+        `btvirt`), in QEMU; no real device paired on a real radio yet;
   - [ ] sound over Bluetooth, which wants a sound server;
   - [x] the microphone's level, whether headphones are in, and which
         card plays (`system/src/sound.rs`);
