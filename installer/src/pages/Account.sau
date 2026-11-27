@@ -45,7 +45,7 @@ export class Account extends View
       onward()
     end
 
-    local name = Entry(installation.person, "Your name", fn(text: string)
+    local name = Entry(installation.person, "Full name", fn(text: string)
       installation.named(text)
       refresh()
     end, entered, first: true)
@@ -64,7 +64,7 @@ export class Account extends View
     end, entered, hidden: true)
     local verify = Entry(
       installation.verify,
-      "Password, again",
+      "Verify password",
       fn(text: string)
         installation.verify = text
         refresh()
@@ -74,13 +74,13 @@ export class Account extends View
     )
 
     local problem = installation.accountProblem()
-    local note = "Typed on the " .. installation.layoutName() .. " keyboard."
+    local note = "Keyboard layout: " .. installation.layoutName() .. "."
     local ink = Look.dimText
     if String.trim(installation.person) != "" and problem != "" then
       note = problem
       ink = Look.warning
     elseif String.trim(installation.person) != "" and String.trim(installation.password) == "" then
-      note = "With no password, anyone can use this computer."
+      note = "Without a password, anyone can use this computer."
     end
     local noted = Text(note).font(Look.smallSize).foregroundStyle(ink)
 
@@ -93,8 +93,8 @@ export class Account extends View
     end
 
     return Step(
-      title: "Who is this computer for?",
-      said: "A name, the account's short name, and a password to ask for when the computer starts.",
+      title: "Create a Computer Account",
+      said: "Enter a full name, an account name and a password. The password is required when the computer starts.",
       content: content.frame(width: 320.0),
       aside: {Choice.quiet("Back", back)},
       forward: {Choice.main("Continue", onward, problem == "")}

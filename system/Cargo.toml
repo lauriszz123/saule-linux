@@ -5,6 +5,11 @@ edition = "2021"
 description = "What a session may ask of the machine but not do itself: sleep, the volume, the network."
 publish = false
 
+# Beside the daemon: what Task Manager asks what is running of.
+[[bin]]
+name = "saule-tasks"
+path = "src/tasks.rs"
+
 [dependencies]
 libc = "0.2"
 saule-password = { path = "../password" }

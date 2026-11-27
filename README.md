@@ -483,8 +483,13 @@ install/                 saule-install (Rust): lays out a disk, puts GRUB on
   src/image.rs           a stick's image, made on the build machine
 password/                how a password is kept (Rust): made by
                          saule-install, checked by saule-system
+pdf/                     saule-pdf (Rust): a page of a PDF as a picture,
+                         for Preview (hayro draws it)
 system/                  saule-system (Rust): what the session asks the
                          machine for
+  src/tasks.rs           saule-tasks, a program of its own beside it:
+                         what is running and how busy the machine is,
+                         for Task Manager
   src/requests.rs        requests, as files dropped in a folder
   src/power.rs           sleep, and the lid
   src/sound.rs           the volume, through the card's control device

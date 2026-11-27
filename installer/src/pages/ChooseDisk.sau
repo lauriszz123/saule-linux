@@ -35,10 +35,10 @@ export class ChooseDisk extends View
 
     if #installation.disks == 0 then
       return Step(
-        title: "No disk was found",
-        said: "This computer has no disk Saule Linux can be installed on. A disk plugged in now will show after looking again.",
+        title: "No Disk Found",
+        said: "No disk suitable for installation was detected. Connect a disk, then choose Refresh.",
         aside: {Choice.quiet("Back", back)},
-        forward: {Choice.main("Look Again", again)}
+        forward: {Choice.main("Refresh", again)}
       )
     end
 
@@ -55,8 +55,8 @@ export class ChooseDisk extends View
     local list = VStack(alignment: fill, spacing: 8.0, children: rows)
 
     return Step(
-      title: "Choose a disk",
-      said: "Saule Linux takes a whole disk for itself.",
+      title: "Select a Disk",
+      said: "Saule Linux is installed on an entire disk.",
       content: ScrollView(child: list).frame(width: 460.0, height: 176.0),
       aside: {Choice.quiet("Back", back)},
       forward: {Choice.main("Continue", onward, installation.chosen > 0)}

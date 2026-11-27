@@ -222,16 +222,16 @@ export class Installation
   -- computer starts straight to the desktop.
   fn accountProblem() -> string
     if String.trim(self.person) == "" then
-      return "Type a name."
+      return "Enter a name."
     end
     if not Installation.validAccount(self.account) then
-      return "The account name is small letters and digits, starting with a letter."
+      return "The account name must start with a letter and contain only lowercase letters and digits."
     end
     if self.account == "root" then
-      return "The account can't be called root."
+      return "The account name “root” is reserved."
     end
     if String.trim(self.password) != String.trim(self.verify) then
-      return "The two passwords are not the same."
+      return "The passwords do not match."
     end
     return ""
   end
@@ -303,7 +303,7 @@ export class Installation
     self.password = ""
     self.verify = ""
     if self.process == nil then
-      self.fail("The installer's own program is missing from this stick.")
+      self.fail("The installer is missing from this USB drive.")
     end
   end
 
@@ -358,7 +358,7 @@ export class Installation
     if code! != 0 or not self.finished then
       local why = String.trim(Bytes.toString(process.readErr()) ?? "")
       if why == "" then
-        why = "The installation stopped before it was done."
+        why = "The installation stopped before it was complete."
       end
       self.fail(why)
     end
@@ -396,9 +396,9 @@ export class Installation
   fn doing() -> string
     return match self.step
       case "system" then "Copying Saule Linux…"
-      case "data" then "Making room for your files…"
-      case "boot" then "Making it start by itself…"
-      case _ then "Getting the disk ready…"
+      case "data" then "Preparing storage…"
+      case "boot" then "Configuring startup…"
+      case _ then "Preparing the disk…"
     end
   end
 

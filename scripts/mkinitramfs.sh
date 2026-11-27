@@ -38,6 +38,10 @@
 #   WALLPAPERS     optional: a directory of wallpaper photographs (the
 #                  window manager's wallpapers/), installed in
 #                  /usr/share/saule/wallpapers
+#   PDF            optional: saule-pdf (../pdf), installed as
+#                  /bin/saule-pdf, for Preview
+#   TASKS          optional: saule-tasks (../system), installed as
+#                  /bin/saule-tasks, for Task Manager
 #   SYSTEM         optional: saule-system (../system), installed as
 #                  /sbin/saule-system, which init keeps running, with its
 #                  DHCP script as /usr/share/saule/dhcp
@@ -146,6 +150,15 @@ if [ -n "${SYSTEM:-}" ] && [ ! -f "$SYSTEM" ]; then
 fi
 if [ -n "${SYSTEM:-}" ]; then
     add_program "$SYSTEM" /sbin/saule-system
+    # Beside it, for anyone to run: what Task Manager asks what is running
+    # of. Where it is missing the app says so and shows nothing.
+    if [ -n "${TASKS:-}" ] && [ -f "$TASKS" ]; then
+        add_program "$TASKS" /bin/saule-tasks
+    fi
+    # And what Preview has a PDF's pages drawn by.
+    if [ -n "${PDF:-}" ] && [ -f "$PDF" ]; then
+        add_program "$PDF" /bin/saule-pdf
+    fi
     install -D -m 0755 "$(dirname "$0")/../system/dhcp" "$STAGE/usr/share/saule/dhcp"
 fi
 

@@ -154,6 +154,10 @@ DRIVERS_DIR := $(wildcard $(BUILD)/drivers/$(DRIVERS))
 # What the session asks the machine for (system/, Rust): sleep, the volume,
 # the network. Init keeps it running.
 SYSTEM := $(call cargo_out,system)/x86_64-unknown-linux-musl/release/saule-system
+# Beside it, from the same folder: what Task Manager asks what is running.
+TASKS  := $(call cargo_out,system)/x86_64-unknown-linux-musl/release/saule-tasks
+# What Preview has a PDF's pages drawn by (pdf/).
+PDF    := $(call cargo_out,pdf)/x86_64-unknown-linux-musl/release/saule-pdf
 # Wi-Fi: wpa_supplicant and the radios' firmware, gathered by
 # scripts/fetch-wifi.sh into build/wifi. WIFI=0 leaves them out: 18 MB that
 # a machine with no radio, or one whose radio needs no firmware, has no use
@@ -180,6 +184,7 @@ ZONEINFO    ?= $(wildcard /usr/share/zoneinfo)
 # read them: what is typed on a keyboard that isn't a US one.
 XKB         ?= $(wildcard /usr/share/X11/xkb)
 FONTS       ?= $(wildcard /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+                          /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf \
                           /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf)
 # Where each font's common part is made (scripts/common-fonts.sh): the
 # few hundred characters most text is made of, which is all a program
@@ -299,6 +304,7 @@ check-config: $(KOUT)/.config
 init:
 	cd init && cargo build --release
 	cd system && cargo build --release --target x86_64-unknown-linux-musl
+	cd pdf && cargo build --release --target x86_64-unknown-linux-musl
 	$(if $(WIFI_DIR),scripts/fetch-wifi.sh $(WIFI_DIR))
 	$(if $(BLUETOOTH_DIR),scripts/fetch-bluetooth.sh $(BLUETOOTH_DIR))
 	scripts/fetch-graphics-firmware.sh $(GRAPHICS_FIRMWARE)
@@ -308,6 +314,7 @@ test:
 	cd init && cargo test
 	cd install && cargo test
 	cd system && cargo test
+	cd pdf && cargo test
 	cd password && cargo test
 
 $(GEN_CPIO): $(KSRC)/Makefile
@@ -348,7 +355,7 @@ initramfs: init session apps $(GEN_CPIO)
 	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) APPS_DIR=$(APPS_OUT) \
 	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" FONTS_COMMON="$(FONTS_COMMON)" DRIVERS_DIR="$(DRIVERS_DIR)" \
 	FS_TOOLS="$(FS_TOOLS)" ZONEINFO="$(ZONEINFO)" \
-	SYSTEM="$(SYSTEM)" WIFI="$(WIFI_DIR)" ALSA="$(ALSA)" XKB="$(XKB)" \
+	SYSTEM="$(SYSTEM)" TASKS="$(TASKS)" PDF="$(PDF)" WIFI="$(WIFI_DIR)" ALSA="$(ALSA)" XKB="$(XKB)" \
 	GRAPHICS_FIRMWARE="$(GRAPHICS_FIRMWARE)" PCI_IDS="$(PCI_IDS)" \
 	BLUETOOTH="$(BLUETOOTH_DIR)" INSTALL_TOOL="$(INSTALL_TOOL)" VERSION="$(SYSTEM_VERSION)" \
 	WALLPAPERS="$(wildcard $(WM)/wallpapers)" scripts/mkinitramfs.sh $(INITRAMFS)
@@ -516,10 +523,12 @@ clean:
 	cd init && cargo clean
 	cd install && cargo clean
 	cd system && cargo clean
+	cd pdf && cargo clean
 
 distclean:
 	rm -rf $(BUILD)
 	cd init && cargo clean
 	cd install && cargo clean
 	cd system && cargo clean
+	cd pdf && cargo clean
 endif

@@ -26,8 +26,8 @@ export class Done extends View
     end
 
     return Step(
-      title: "Saule Linux is installed",
-      said: "Take the USB stick out, then restart. The computer starts from its own disk from now on.",
+      title: "Installation Complete",
+      said: "Remove the USB drive, then restart. The computer will start from its own disk.",
       aside: {Choice.quiet("Shut Down", shutDown)},
       forward: {Choice.main("Restart", restart)},
       done: true

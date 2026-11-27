@@ -75,11 +75,11 @@ impl Update {
             return;
         }
         if !acceptable(&path) || !Path::new(&path).is_file() {
-            self.set("failed That is not an update file this system can take.".to_string());
+            self.set("failed The update file is not valid for this system.".to_string());
             return;
         }
         if !Path::new(TOOL).exists() {
-            self.set("failed This system has no updater.".to_string());
+            self.set("failed Software Update is not available on this system.".to_string());
             return;
         }
         self.set("installing".to_string());
@@ -110,7 +110,7 @@ impl Update {
                         format!("failed {why}")
                     }
                 }
-                Err(_) => "failed The updater could not be run.".to_string(),
+                Err(_) => "failed The update could not be started.".to_string(),
             };
             this.set(state);
         });

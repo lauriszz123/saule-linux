@@ -39,8 +39,8 @@ export class Confirm extends View
 
     if disk.contents == Contents.Blank then
       return Step(
-        title: "Install on this disk?",
-        said: named .. " is empty. Saule Linux will use all of it.",
+        title: "Install on This Disk?",
+        said: named .. " is empty. Saule Linux will use the entire disk.",
         aside: {Choice.quiet("Back", back)},
         forward: {Choice.main("Install", erase)}
       )
@@ -48,8 +48,8 @@ export class Confirm extends View
 
     if disk.contents == Contents.Saule then
       return Step(
-        title: "Saule Linux is already here",
-        said: named .. " has Saule Linux on it. Install it again and keep the files and settings on the disk, or erase the disk and start afresh.",
+        title: "Saule Linux Is Already Installed",
+        said: named .. " already contains Saule Linux. Reinstall and keep the existing files and settings, or erase the disk and start over.",
         aside: {Choice.quiet("Back", back)},
         forward: {
           Choice.danger("Erase Everything", erase),
@@ -59,7 +59,7 @@ export class Confirm extends View
     end
 
     return Step(
-      title: "Erase this disk?",
+      title: "Erase This Disk?",
       said: Confirm.loss(disk, named),
       aside: {Choice.quiet("Back", back)},
       forward: {Choice.danger("Erase and Install", erase)},
@@ -69,18 +69,18 @@ export class Confirm extends View
 
   -- What erasing `disk` loses.
   static fn loss(disk: Disk, named: string) -> string
-    local last = " Installing erases the whole disk, and that can't be undone."
+    local last = " Installing erases the entire disk. This cannot be undone."
     return match disk.contents
       case Contents.Windows then
-        named .. " has Windows on it. Windows and every file on the disk will be gone." .. last
+        named .. " contains Windows. Windows and all files on the disk will be erased." .. last
       case Contents.Linux then
-        named .. " has another Linux system on it. That system and its files will be gone." .. last
+        named .. " contains another Linux system. The system and its files will be erased." .. last
       case Contents.Both then
-        named .. " has Windows and another Linux system on it. Both, and every file on the disk, will be gone." .. last
+        named .. " contains Windows and another Linux system. Both systems and all files on the disk will be erased." .. last
       case Contents.SauleData then
-        named .. " has files kept by Saule Linux. They will be gone." .. last
+        named .. " contains Saule Linux data. The data will be erased." .. last
       case _ then
-        named .. " has something on it. Everything on the disk will be gone." .. last
+        named .. " contains data. All data on the disk will be erased." .. last
     end
   end
 end

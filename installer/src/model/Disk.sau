@@ -111,12 +111,12 @@ export class Disk
   fn holds() -> string
     return match self.contents
       case Contents.Blank then "Empty"
-      case Contents.Saule then "Saule Linux is installed on it"
-      case Contents.SauleData then "Has files kept by Saule Linux"
-      case Contents.Windows then "Windows is on it"
-      case Contents.Linux then "Another Linux system is on it"
-      case Contents.Both then "Windows and another Linux system are on it"
-      case Contents.Other then "Has something on it"
+      case Contents.Saule then "Contains Saule Linux"
+      case Contents.SauleData then "Contains Saule Linux data"
+      case Contents.Windows then "Contains Windows"
+      case Contents.Linux then "Contains another Linux system"
+      case Contents.Both then "Contains Windows and another Linux system"
+      case Contents.Other then "Contains data"
     end
   end
 

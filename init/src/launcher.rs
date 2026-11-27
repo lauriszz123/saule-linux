@@ -22,7 +22,8 @@
 //! forgotten,
 //!
 //!   ID  PID  running
-//!   ID  PID  ended   CODE       -1 when a signal ended it
+//!   ID  PID  ended   CODE       below 0 when a signal ended it: that
+//!                              signal's number (-15, -9, -11)
 //!   ID  0    refused REASON     never started
 //!
 //! Only a program in [`APPS`] is started: an app that is installed, not
@@ -185,11 +186,7 @@ pub fn session_ended() {
 /// Init's main loop reaped process `pid`, which ended with `status` (as
 /// `waitpid` gives it). Most are not apps: those are ignored.
 pub fn reaped(pid: libc::pid_t, status: libc::c_int) {
-    let code = if libc::WIFEXITED(status) {
-        libc::WEXITSTATUS(status)
-    } else {
-        -1
-    };
+    let code = ended_with(status);
     let ours = with(|state| {
         let app = state
             .apps
@@ -205,6 +202,20 @@ pub fn reaped(pid: libc::pid_t, status: libc::c_int) {
     });
     if ours == Some(true) {
         say();
+    }
+}
+
+/// How a process ended, from the status `waitpid` gave: the number it
+/// exited with, or, ended by a signal, that signal's number below zero
+/// (-15 asked to end, -9 killed, -11 a crash). The session tells one
+/// that was asked to end from one that failed by it.
+fn ended_with(status: libc::c_int) -> i32 {
+    if libc::WIFEXITED(status) {
+        libc::WEXITSTATUS(status)
+    } else if libc::WIFSIGNALED(status) {
+        -libc::WTERMSIG(status)
+    } else {
+        -1
     }
 }
 
@@ -547,6 +558,17 @@ fn say() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_process_ended_by_a_signal_is_said_with_the_signals_number() {
+        // What `waitpid` gives: the exit code in the second byte; the
+        // signal's number in the lowest seven bits.
+        assert_eq!(ended_with(0), 0);
+        assert_eq!(ended_with(3 << 8), 3);
+        assert_eq!(ended_with(libc::SIGTERM), -15);
+        assert_eq!(ended_with(libc::SIGKILL), -9);
+        assert_eq!(ended_with(libc::SIGSEGV), -11);
+    }
 
     #[test]
     fn a_request_s_fields_are_set_apart_by_tabs_and_may_hold_one() {

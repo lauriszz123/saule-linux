@@ -16,7 +16,7 @@ export class Installing extends View
 
   fn body(context: BuildContext) -> View
     local installation = self.installation
-    local advice = Text("Keep the USB stick in and the computer on.")
+    local advice = Text("Do not remove the USB drive or turn off the computer.")
     local bar = ProgressView(value: installation.shown, height: 8.0)
 
     local content = VStack(alignment: StackAlignment.Center, spacing: 14.0) do

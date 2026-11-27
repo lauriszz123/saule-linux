@@ -30,7 +30,7 @@ export class Failed extends View
     end
 
     return Step(
-      title: "Saule Linux could not be installed",
+      title: "Installation Failed",
       said: installation.failure,
       aside: {Choice.quiet("Shut Down", shutDown)},
       forward: {Choice.main("Try Again", again)},

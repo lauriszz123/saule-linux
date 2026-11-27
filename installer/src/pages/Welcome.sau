@@ -37,7 +37,7 @@ export class Welcome extends View
 
     return Step(
       title: "Welcome to Saule Linux",
-      said: "Install it on this computer, or try it first. Trying it runs from the USB stick and changes nothing.",
+      said: "Install Saule Linux on this computer, or try it without installing. Trying it runs from the USB drive and makes no changes to this computer.",
       aside: {Choice.quiet("Try It First", tryFirst)},
       forward: {Choice.main("Install", install)}
     )

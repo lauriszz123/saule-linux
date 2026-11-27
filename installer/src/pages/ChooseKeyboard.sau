@@ -67,7 +67,7 @@ export class ChooseKeyboard extends View
       )
     end
     if #rows == 0 then
-      local none = Text("No layout by that name.").font(Look.bodySize)
+      local none = Text("No matching layout.").font(Look.bodySize)
       Table.insert(rows, none.foregroundStyle(Look.dimText).centered())
     end
     local fill = StackAlignment.Fill
@@ -89,7 +89,7 @@ export class ChooseKeyboard extends View
     local typed = fn(text: string)
       tried.set(text)
     end
-    local trial = Entry(tried.text(""), "Type here to try the keys", typed, entered)
+    local trial = Entry(tried.text(""), "Type here to test the layout", typed, entered)
     local content = VStack(alignment: fill, spacing: 8.0) do
       show(search)
       ScrollView(child: list).frame(height: 104.0)
@@ -97,8 +97,8 @@ export class ChooseKeyboard extends View
     end
 
     return Step(
-      title: "Choose the keyboard",
-      said: "What is printed on the keys. Now: " .. installation.layoutName() .. ".",
+      title: "Select Your Keyboard Layout",
+      said: "Choose the layout that matches this keyboard. Current layout: " .. installation.layoutName() .. ".",
       content: content.frame(width: 400.0),
       aside: {Choice.quiet("Back", back)},
       forward: {Choice.main("Continue", onward)}
