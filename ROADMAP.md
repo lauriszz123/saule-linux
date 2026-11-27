@@ -359,8 +359,9 @@ What the display server needs from Rust. Everything above it is Saule.
         (`preview/`).
 - [x] **Apps on the disk, not in memory**: a stick and an installed system
       keep the apps as files beside the initramfs
-      (`disk/<version>/bin/apps`), which init mounts read only
-      (`init/src/disk.rs`). The installer copies them, and an update
+      (`disk/<version>/bin/apps`), which init mounts read only, and
+      again when a stick that left is back (`init/src/disk.rs`). The
+      installer copies them, and an update
       brings them in front of its initramfs, where an older updater
       leaves them for the kernel to unpack.
 

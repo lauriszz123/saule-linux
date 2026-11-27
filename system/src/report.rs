@@ -188,6 +188,9 @@ fn gather(notes: &str) -> String {
     section(&mut text, "Programs");
     text.push_str(&end_of(&run(&["ps"])));
 
+    section(&mut text, "What init said");
+    text.push_str(&end_of(&read("/run/saule/init.log")));
+
     section(&mut text, "What the session and its apps printed, before");
     text.push_str(&end_of(&read("/run/saule/session.log.old")));
     section(&mut text, "What the session and its apps printed");

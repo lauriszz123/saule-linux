@@ -153,10 +153,11 @@ pub fn write_efi(
 /// Esc pressed (or Shift held) in that second brings up a menu with a
 /// second way to start: with the processor drawing everything
 /// (`SHINE_GPU=0`), for a graphics chip whose driver misbehaves. And a
-/// third, a trial: with programs drawing on the graphics chip as the
-/// desktop does (`SHINE_GPU_DRAW=1`) on the old Intel chips where Shine
-/// has them draw on the processor, to see on such a machine whether its
-/// programs run, and faster.
+/// third: with the desktop drawn by the graphics chip and the programs
+/// in it by the processor (`SHINE_APP_GPU=0`), for a chip whose driver
+/// runs the one and not the others. Shine finds that out for itself on
+/// the old Intel chips, after one program has failed to open; this is
+/// for a chip it does not know to doubt.
 /// `gfxpayload` has GRUB leave the screen in a graphics mode, which is all
 /// a kernel with no driver for the machine's graphics chip has to draw on.
 pub fn config(options: &str, overlays: &[String]) -> String {
@@ -185,8 +186,8 @@ const SAFE_TITLE: &str = "Saule Linux, drawn by the processor (safe graphics)";
 const SAFE_OPTIONS: &str = " saule.env.SHINE_GPU=0";
 
 /// The third, and what it adds.
-const TRIAL_TITLE: &str = "Saule Linux, programs drawn by the graphics chip (trial)";
-const TRIAL_OPTIONS: &str = " saule.env.SHINE_GPU_DRAW=1";
+const TRIAL_TITLE: &str = "Saule Linux, programs drawn by the processor";
+const TRIAL_OPTIONS: &str = " saule.env.SHINE_APP_GPU=0";
 
 #[cfg(test)]
 mod tests {
@@ -319,8 +320,8 @@ mod tests {
              menuentry \"Saule Linux\" {\n    linux /vmlinuz quiet\n    initrd /initramfs.cpio.gz\n}\n\
              menuentry \"Saule Linux, drawn by the processor (safe graphics)\" {\n    \
              linux /vmlinuz quiet saule.env.SHINE_GPU=0\n    initrd /initramfs.cpio.gz\n}\n\
-             menuentry \"Saule Linux, programs drawn by the graphics chip (trial)\" {\n    \
-             linux /vmlinuz quiet saule.env.SHINE_GPU_DRAW=1\n    initrd /initramfs.cpio.gz\n}\n"
+             menuentry \"Saule Linux, programs drawn by the processor\" {\n    \
+             linux /vmlinuz quiet saule.env.SHINE_APP_GPU=0\n    initrd /initramfs.cpio.gz\n}\n"
         );
         let with_pack = config("", &["/drivers/gen3.cpio.gz".into()]);
         assert!(with_pack

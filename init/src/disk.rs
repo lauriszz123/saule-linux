@@ -22,6 +22,18 @@
 //! (`../install/src/update.rs`), so the two never disagree, whenever the
 //! power goes.
 //!
+//! A stick is not a disk: it can be pulled out, and one may leave the USB
+//! bus by itself and come back as a new device (on the HP Mini the stick
+//! the system was started from did, three times in its first fifty
+//! seconds), and what was mounted from the old one is gone for good. So
+//! the file system is watched ([`watch`]). When its device goes it is let
+//! go of, the links are left pointing at nothing, and the system has no
+//! apps: the window manager lists `/bin/apps` whenever it draws its Dock,
+//! and shows none. When a file system with the same label and the same
+//! version's apps is there again it is mounted in the same place, and the
+//! links say what they did. An app that is running is not touched either
+//! way: Saule read all of it when it started.
+//!
 //! An image that carries its apps in the initramfs (one started straight
 //! from a kernel and an initramfs, with no disk under it; one an older
 //! updater installed) has them in `/bin/apps` already, and nothing is
@@ -50,10 +62,16 @@ const RELEASE: &str = "/etc/saule-release";
 const SYSTEM_LABEL: &str = "SAULE-BOOT";
 const MEDIUM_LABEL: &str = "SAULE-INSTALL";
 
-/// How long to wait for the file system. A disk the machine started from
-/// is there already; a stick is found seconds into the kernel's start.
+/// How long the session is kept waiting for the file system. A disk the
+/// machine started from is there already; a stick is found seconds into
+/// the kernel's start. One that comes later is still found ([`watch`]).
 const DISK_APPEARS: Duration = Duration::from_secs(3);
 const STICK_APPEARS: Duration = Duration::from_secs(8);
+
+/// How often the file system's device is asked after, and how often one
+/// that is missing is looked for when no device has come or gone.
+const WATCH: Duration = Duration::from_secs(1);
+const LOOK_ANYWAY: u32 = 5;
 
 /// Find the apps kept on the disk and put them where apps are looked for.
 /// `stick` when the machine was started from one. Never fails: without
@@ -75,26 +93,123 @@ pub fn attach(stick: bool) {
         (SYSTEM_LABEL, DISK_APPEARS)
     };
     let deadline = Instant::now() + patience;
-    loop {
-        for device in storage::labelled_as(label) {
-            if let Some(tree) = mounted_with(&device, version) {
-                let linked = link_into(&tree.join("bin"), Path::new(BIN));
-                log::info(&format!(
-                    "apps: {} on {} ({linked} linked into {BIN})",
-                    tree.strip_prefix(MOUNT).unwrap_or(&tree).display(),
-                    device.display()
+    let mut attached = None;
+    while attached.is_none() {
+        attached = attach_from(label, version);
+        if attached.is_none() {
+            if Instant::now() >= deadline {
+                log::warn(&format!(
+                    "no apps yet: no file system labelled {label} has disk/{version}"
                 ));
-                return;
+                break;
             }
+            std::thread::sleep(Duration::from_millis(200));
         }
-        if Instant::now() >= deadline {
-            log::warn(&format!(
-                "no apps: no file system labelled {label} has disk/{version}"
-            ));
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(200));
     }
+    watch(label, version.to_string(), attached);
+}
+
+/// The file system the apps are read from: its device, and which disk
+/// that was. A stick that left and came back may be given its old name,
+/// and is a new disk all the same; the kernel numbers every disk it has
+/// ever seen (`diskseq`).
+#[derive(Debug, PartialEq)]
+struct Attached {
+    device: PathBuf,
+    disk: Option<String>,
+}
+
+impl Attached {
+    fn of(device: PathBuf) -> Attached {
+        let disk = disk_number(Path::new("/sys/class/block"), &device);
+        Attached { device, disk }
+    }
+
+    /// Whether the device is the one that was mounted, still.
+    fn is_there(&self) -> bool {
+        let sys = Path::new("/sys/class/block");
+        let named = self.device.file_name().map(|name| sys.join(name));
+        named.is_some_and(|named| named.exists()) && disk_number(sys, &self.device) == self.disk
+    }
+}
+
+/// The number the kernel gave the disk `device` is, or is a partition of,
+/// as `sys` (`/sys/class/block`) has it.
+fn disk_number(sys: &Path, device: &Path) -> Option<String> {
+    let named = sys.join(device.file_name()?);
+    // A partition's folder is inside its disk's.
+    [named.join("diskseq"), named.join("../diskseq")]
+        .iter()
+        .find_map(|path| fs::read_to_string(path).ok())
+        .map(|number| number.trim().to_string())
+}
+
+/// Mount the first file system labelled `label` that has `version`'s apps,
+/// and link them into `/bin`.
+fn attach_from(label: &str, version: &str) -> Option<Attached> {
+    for device in storage::labelled_as(label) {
+        if let Some(tree) = mounted_with(&device, version) {
+            let linked = link_into(&tree.join("bin"), Path::new(BIN));
+            log::info(&format!(
+                "apps: {} on {} ({linked} linked into {BIN})",
+                tree.strip_prefix(MOUNT).unwrap_or(&tree).display(),
+                device.display()
+            ));
+            return Some(Attached::of(device));
+        }
+    }
+    None
+}
+
+/// Keep the apps where they are looked for, for as long as the machine is
+/// on, in a thread: let go of the file system when its device has gone,
+/// and mount it again when it, or another with the same label and the
+/// same apps, is there.
+fn watch(label: &'static str, version: String, mut attached: Option<Attached>) {
+    std::thread::spawn(move || {
+        // A missing file system is looked for when a disk or a partition
+        // has come or gone, and now and then anyway: looking is reading
+        // the start of every disk there is.
+        let mut seen = Vec::new();
+        let mut quiet = 0;
+        loop {
+            std::thread::sleep(WATCH);
+            if let Some(mounted) = &attached {
+                if mounted.is_there() {
+                    continue;
+                }
+                detach();
+                log::warn(&format!(
+                    "apps: {} has gone, and the apps with it until it is back",
+                    mounted.device.display()
+                ));
+                attached = None;
+                seen.clear();
+            }
+            let now = block_devices();
+            quiet += 1;
+            if now == seen && quiet < LOOK_ANYWAY {
+                continue;
+            }
+            seen = now;
+            quiet = 0;
+            attached = attach_from(label, &version);
+        }
+    });
+}
+
+/// The name of every disk and partition there is, in order.
+fn block_devices() -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir("/sys/class/block")
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
 }
 
 /// Let go of the file system, before power goes. It was only read, so
@@ -207,6 +322,34 @@ mod tests {
         // A second time changes nothing.
         assert_eq!(link_into(&from, &into), 0);
         fs::remove_dir_all(work).unwrap();
+    }
+
+    #[test]
+    fn a_disk_is_known_by_its_number_whether_whole_or_a_partition() {
+        let sys = folder("seq");
+        // As `/sys/class/block` is laid out behind its links: a
+        // partition's folder inside its disk's.
+        fs::create_dir_all(sys.join("sdb/sdb1")).unwrap();
+        fs::write(sys.join("sdb/diskseq"), "7\n").unwrap();
+        std::os::unix::fs::symlink(sys.join("sdb/sdb1"), sys.join("sdb1")).unwrap();
+
+        assert_eq!(
+            disk_number(&sys, Path::new("/dev/sdb")).as_deref(),
+            Some("7")
+        );
+        assert_eq!(
+            disk_number(&sys, Path::new("/dev/sdb1")).as_deref(),
+            Some("7")
+        );
+        assert_eq!(disk_number(&sys, Path::new("/dev/sdc1")), None);
+
+        // The stick left and came back under the same name: another disk.
+        fs::write(sys.join("sdb/diskseq"), "9\n").unwrap();
+        assert_eq!(
+            disk_number(&sys, Path::new("/dev/sdb1")).as_deref(),
+            Some("9")
+        );
+        fs::remove_dir_all(sys).unwrap();
     }
 
     #[test]

@@ -116,9 +116,14 @@ gets used.
    started from (`disk/<version>/bin/apps/<name>`, and
    `disk/<version>/bin/` for what only apps run), which init mounts read
    only and links into `/bin` (`init/src/disk.rs`): an app is read from
-   the disk when it is opened and takes no memory before. `<version>` is
-   the system's own, so an initramfs only ever finds the apps built with
-   it. An initramfs started with nothing under it (`make run`,
+   the disk when it is opened and takes no memory before. A stick can
+   leave (pulled out, or dropped from the USB bus and back as a new
+   device): init watches the file system, lets go of it when its device
+   has gone, and mounts it in the same place when it is there again.
+   Without it there are no apps to open, and the window manager draws no
+   Dock; an app that is running stays, read whole when it started.
+   `<version>` is the system's own, so an initramfs only ever finds the
+   apps built with it. An initramfs started with nothing under it (`make run`,
    `run-netbook`) carries its apps itself, as it did.
 
 Kernel command line options read by init:
@@ -485,7 +490,7 @@ init/                    PID 1 (Rust)
   src/main.rs            the boot sequence
   src/mounts.rs          /proc /sys /dev /run /tmp
   src/storage.rs         the data disk: find it, or make it, and mount /data
-  src/disk.rs            the apps kept on the disk, mounted and linked into /bin
+  src/disk.rs            the apps kept on the disk: mounted, linked into /bin, and mounted again when a stick comes back
   src/installer.rs       started from the stick: the driver pack, unpacked
   src/services.rs        the programs kept running beside the session
   src/launcher.rs        the apps the session asks for, started as the person

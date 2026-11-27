@@ -95,7 +95,8 @@ IMAGE_APPS := $(BUILD)/image-apps
 # 1: the apps, and what only they run, are left out of the initramfs. A
 # stick and an installed system keep them as files beside it, which init
 # mounts (init/src/disk.rs), so that they are read from the disk when
-# opened and take no memory before. An initramfs started with no disk
+# opened and take no memory before; a stick that leaves is let go of and
+# mounted again when it is back. An initramfs started with no disk
 # under it (`make run`, `run-netbook`) carries them, as 0 says.
 ON_DISK ?= 0
 TARBALL   := $(BUILD)/downloads/linux-$(KERNEL_VERSION).tar.xz
@@ -132,7 +133,16 @@ BOOT_OPTIONS ?= quiet
 # its frames spend their time and which way they are shown (Shine's
 # traces, a line every two seconds for each program): a report made
 # from it (Mod+Shift+R) then says what is slow.
-STICK_OPTIONS ?= saule.env.SHINE_TRACE_FRAMES=1 saule.env.SHINE_TRACE_PRESENT=1
+#
+# And the processor is kept out of its deepest sleeps. A trial, to be
+# taken out or made the system's own once a report says which: on the HP
+# Mini the stick left the USB bus twice in 450 seconds under the kernel
+# with a steady tick, and three times in 50 under the one whose tick
+# stops when idle (and whose processor so sleeps deeper and longer),
+# with the apps that are read from it. Whether that is the cause is not
+# known.
+STICK_OPTIONS ?= saule.env.SHINE_TRACE_FRAMES=1 saule.env.SHINE_TRACE_PRESENT=1 \
+	intel_idle.max_cstate=2 processor.max_cstate=2
 # The graphics driver packs the stick carries: every one that is built
 # (`make drivers DRIVERS=gen3`). The installer gives a machine the one its
 # chip needs (config/drivers.list).
