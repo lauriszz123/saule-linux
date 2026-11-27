@@ -42,6 +42,7 @@
 //!       the list given on standard input.
 
 mod answers;
+mod cpio;
 mod disks;
 mod drivers;
 mod grub;

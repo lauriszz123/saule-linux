@@ -192,12 +192,20 @@ saule build [DIR | FILE] [-o OUT] [--keep-source]
 - [x] **No source in the file**: errors keep file, line and column
       (`--keep-source` keeps the text too).
 - [x] **The distro uses it**: `session/` is built into `/bin/session`; the
-      image carries no toolchain and no Saule source.
+      image carries no Saule source.
+- [x] **One runtime for every program** (`saule build --shared=/bin/saule`):
+      the output is the bytecode and the bundled files behind a first line
+      that names the saule to run it, and its native packages are loaded
+      from that saule's home. The session, the installer and the ten apps
+      were twelve megabytes each, all of it in memory from the start; they
+      are a few hundred kilobytes, and the image has one `/bin/saule` and
+      one Shine. What the initramfs unpacks to went from 210 MB to 69 MB.
 - [x] **Checked**: all 127 `tests/run` fixtures print the same built as run
       (`scripts/test_bytecode.sh` in ~/saule); gamemaker builds into one
       9.8 MB file and renders identically.
 - [ ] **Smaller runner**: today the runtime part is the full `saule` binary
-      (6.2 MB, including fmt/check/install). A `saule-runner` without them.
+      (6.9 MB, including fmt/check/install), which is also what the image
+      has as `/bin/saule`. A `saule-runner` without them.
 - [ ] **Static, musl**: native packages linked into the runner instead of
       `dlopen`ed, so a build has no glibc dependency.
 - [ ] **Cross builds** (`--target`): Windows, then macOS.
@@ -347,7 +355,14 @@ What the display server needs from Rust. Everything above it is Saule.
         (`system/src/disks.rs`; FAT, exFAT, NTFS and ext in the kernel);
   - [x] an app told its window is closing in time to ask about unsaved
         changes (Shine's `Window.holdClose`, uikit's `App.onCloseRequest`);
-  - [ ] apps for what else is in a folder: pictures, PDFs.
+  - [x] an app for what else is in a folder: pictures, PDFs and Markdown
+        (`preview/`).
+- [x] **Apps on the disk, not in memory**: a stick and an installed system
+      keep the apps as files beside the initramfs
+      (`disk/<version>/bin/apps`), which init mounts read only
+      (`init/src/disk.rs`). The installer copies them, and an update
+      brings them in front of its initramfs, where an older updater
+      leaves them for the kernel to unpack.
 
 ## Security: the macOS model 🦀🌙
 

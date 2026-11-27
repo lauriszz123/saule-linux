@@ -49,7 +49,7 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 use crate::account::{self, Account, Switch};
-use crate::{log, person, storage, system};
+use crate::{disk, log, person, storage, system};
 
 pub const FOLDER: &str = "/run/saule/launcher";
 /// Where the session's services are published, and its apps find them.
@@ -471,6 +471,9 @@ fn launch(asked: &str, rest: &[String]) -> Result<libc::pid_t, String> {
         .env("XDG_RUNTIME_DIR", person.runtime_dir())
         .env("SAULE_SERVICES_DIR", SERVICES)
         .stdin(Stdio::null());
+    if Path::new(disk::SAULE_HOME).is_dir() {
+        command.env("SAULE_HOME", disk::SAULE_HOME);
+    }
     if storage::mounted() {
         command.env("SAULE_DATA", storage::MOUNT);
     }

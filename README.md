@@ -102,10 +102,24 @@ gets used.
    - `poweroff`/`reboot` (signals `SIGUSR2`/`SIGTERM`) and Ctrl-Alt-Del shut
      down cleanly.
 3. **The session** (`session/`) is an ordinary Saule project. `make` builds
-   it with `saule build` into one executable — bytecode, the Saule runtime,
-   its native packages and bundled files — which becomes `/bin/session`.
-   No Saule toolchain or source is in the image. Bundled files unpack to
-   `~/.cache/saule/apps/` on first start.
+   it with `saule build --shared=/bin/saule` into one file, its bytecode
+   and bundled files, which becomes `/bin/session`. The apps and the
+   installer are built the same way, and all of them run on one Saule,
+   `/bin/saule`, with the native packages it loads for them in
+   `/usr/lib/saule/native_packages` (init names that folder to every
+   program as `SAULE_HOME`). An app is a few hundred kilobytes so; with a
+   runtime and Shine of its own it was twelve megabytes, held in memory
+   whether it was open or not. No Saule source is in the image. Bundled
+   files unpack to `~/.cache/saule/apps/` on first start.
+4. **The apps** are not in the initramfs of a stick or an installed
+   system. They are files beside it, in the file system the machine
+   started from (`disk/<version>/bin/apps/<name>`, and
+   `disk/<version>/bin/` for what only apps run), which init mounts read
+   only and links into `/bin` (`init/src/disk.rs`): an app is read from
+   the disk when it is opened and takes no memory before. `<version>` is
+   the system's own, so an initramfs only ever finds the apps built with
+   it. An initramfs started with nothing under it (`make run`,
+   `run-netbook`) carries its apps itself, as it did.
 
 Kernel command line options read by init:
 
@@ -172,7 +186,8 @@ What it installs:
 sector 0          GRUB's first stage, and the partition table (MBR)
 sectors 1–2047    GRUB itself, for a BIOS
 partition 1       SAULE-BOOT, ext2, 512 MB: the kernel, the initramfs, one
-                  graphics driver pack, GRUB's configuration
+                  graphics driver pack, GRUB's configuration, and the
+                  apps (disk/<version>/)
 partition 2       SAULE, ext4: /data, the rest of the disk
 partition 3       GRUB for UEFI: FAT32, the last 34 MB
 ```
@@ -181,9 +196,11 @@ One disk starts either kind of machine, so a disk moved from an old PC to
 a new one still starts.
 
 The system still runs from memory once installed: GRUB loads the kernel and
-the initramfs from the first partition, which is then never mounted, so no
-power cut and no program can leave a machine that doesn't start. The second
-partition is the [data disk](#storage).
+the initramfs from the first partition. All that is read from it after
+that is the apps, for which init mounts it read only; nothing writes to it
+but an [update](#updating), so no power cut and no program can leave a
+machine that doesn't start. The second partition is the
+[data disk](#storage).
 
 Until it is given a name, a machine is called after what it is, as its
 maker's firmware says: an Inspiron 7559 is `Inspiron-7559`
@@ -249,8 +266,8 @@ installed system inherits.
 ## Updating
 
 An installed system is updated from a file, `saule-linux-<version>.update`:
-the kernel, the initramfs and the driver packs, as the stick carries them,
-with a signature at its end. `make update` makes one (after `make
+the kernel, the initramfs, the apps and the driver packs, as the stick
+carries them, with a signature at its end. `make update` makes one (after `make
 update-key`, once, has made the key it is signed with: the private half in
 `keys/`, which is not in the repository and wants keeping safe, and the
 public half in `config/update.pub`, which is built into `saule-install`).
@@ -264,6 +281,16 @@ and flushed, and then renamed over them, so a power cut leaves the old
 system or the new. The computer starts the new one the next time it
 starts. What is kept on the data disk is not touched, and the kernel
 options the machine starts with stay as they are.
+
+The apps travel in front of the initramfs, in the same file of the update,
+as an archive of their own (`install/src/cpio.rs`). The updater unpacks
+them into `disk/<version>/` before it replaces the initramfs, and leaves
+the running version's there until the update after, so each initramfs
+finds its own apps whenever the power goes. A system installed before the
+apps were kept on the disk has an updater that knows nothing of this: it
+writes the file whole, the kernel unpacks both archives into memory, and
+that system starts with its apps where it always had them. It keeps them
+on the disk from its next update on.
 
 There is nowhere updates are downloaded from yet: the file is carried.
 
@@ -400,8 +427,9 @@ with a blank screen (the real ones restore theirs).
 
 ## Storage
 
-The system runs from memory: the initramfs is all of it, and what it writes
-there is gone at power-off. What should last goes on the **data disk**,
+The system runs from memory: the initramfs is all of it but the apps,
+which are read from where it started, and what it writes there is gone at
+power-off. What should last goes on the **data disk**,
 which init (`init/src/storage.rs`) mounts at `/data`:
 
 - an ext2/3/4 file system labelled `SAULE`, on any disk or partition, is
@@ -457,6 +485,7 @@ init/                    PID 1 (Rust)
   src/main.rs            the boot sequence
   src/mounts.rs          /proc /sys /dev /run /tmp
   src/storage.rs         the data disk: find it, or make it, and mount /data
+  src/disk.rs            the apps kept on the disk, mounted and linked into /bin
   src/installer.rs       started from the stick: the driver pack, unpacked
   src/services.rs        the programs kept running beside the session
   src/launcher.rs        the apps the session asks for, started as the person
@@ -479,6 +508,7 @@ install/                 saule-install (Rust): lays out a disk, puts GRUB on
   src/drivers.rs         which driver pack a graphics chip needs
   src/target.rs          installing onto this machine's disk
   src/update.rs          an update file: made, checked, applied
+  src/cpio.rs            the archive the apps travel in, inside an update
   src/answers.rs         what the installer was told, put on the data disk
   src/image.rs           a stick's image, made on the build machine
 password/                how a password is kept (Rust): made by

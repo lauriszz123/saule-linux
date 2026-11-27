@@ -7,14 +7,16 @@
 //!    disk at `/data`, where what the session saves is kept across a
 //!    reboot (`storage.rs`), and with it the name and time zone the person
 //!    chose for the machine (`system.rs`);
-//! 3. start the **session** — `/bin/session`, a Saule program built with
+//! 3. mount, read only, the file system the machine started from, for the
+//!    apps it keeps there and not in memory (`disk.rs`);
+//! 4. start the **session** — `/bin/session`, a Saule program built with
 //!    `saule build` — as the unprivileged `display` account, with the screen
 //!    and input devices handed to it (`seat.rs`), and keep it going;
 //!    and beside it the programs that do what it may ask for but not do
 //!    itself (`services.rs`), and the apps it asks for, which run as the
 //!    person's account and not its own (`launcher.rs`, `person.rs`);
-//! 4. reap every orphaned process (PID 1 inherits them all);
-//! 5. power off or reboot cleanly when asked.
+//! 5. reap every orphaned process (PID 1 inherits them all);
+//! 6. power off or reboot cleanly when asked.
 //!
 //! PID 1 must never exit: the kernel panics when it does. Every error here is
 //! logged and survived.
@@ -33,6 +35,7 @@
 mod account;
 mod cmdline;
 mod console;
+mod disk;
 mod installer;
 mod launcher;
 mod log;
@@ -79,6 +82,9 @@ fn main() {
         storage::mount_data();
         system::start();
     }
+    // The apps, which a stick and an installed system keep on the disk
+    // and not in memory.
+    disk::attach(cmdline.installer);
     // The person's account is called after whoever the machine is for,
     // before anything looks it up by name; and a home it once shared with
     // the session's account is made its own.

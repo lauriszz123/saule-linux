@@ -21,7 +21,7 @@ use crate::account::{self, Account, Switch};
 use crate::cmdline::{self, Cmdline, OnExit};
 use crate::output::Output;
 use crate::power::{self, Request};
-use crate::{console, launcher, log, person, storage, system};
+use crate::{console, disk, launcher, log, person, storage, system};
 
 const SHELL: &str = "/bin/sh";
 
@@ -272,6 +272,11 @@ fn command_for(
         .env("LOGNAME", &account.name)
         .env("TERM", "linux")
         .env("LANG", "C.UTF-8");
+    // Where the Saule it runs on keeps the native packages every program
+    // in the image shares.
+    if Path::new(disk::SAULE_HOME).is_dir() {
+        command.env("SAULE_HOME", disk::SAULE_HOME);
+    }
 
     if !account.is_root() {
         command.env("XDG_RUNTIME_DIR", account.runtime_dir());

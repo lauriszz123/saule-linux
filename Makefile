@@ -85,6 +85,19 @@ GEN_CPIO  := $(BUILD)/tools/gen_init_cpio
 INITRAMFS := $(BUILD)/initramfs.cpio.gz
 SESSION   := $(BUILD)/session
 APPS_OUT  := $(BUILD)/apps
+# The one Saule every Saule program in the image runs on, and the apps
+# built for it: without a runtime of their own (`saule build --shared`),
+# a few hundred kilobytes each where a whole executable is twelve
+# megabytes. `make apps` still builds whole ones into build/apps, which
+# run on any desktop.
+RUNTIME    := /bin/saule
+IMAGE_APPS := $(BUILD)/image-apps
+# 1: the apps, and what only they run, are left out of the initramfs. A
+# stick and an installed system keep them as files beside it, which init
+# mounts (init/src/disk.rs), so that they are read from the disk when
+# opened and take no memory before. An initramfs started with no disk
+# under it (`make run`, `run-netbook`) carries them, as 0 says.
+ON_DISK ?= 0
 TARBALL   := $(BUILD)/downloads/linux-$(KERNEL_VERSION).tar.xz
 
 # The installer: its window (installer/, a Saule project) and the program
@@ -98,6 +111,10 @@ INSTALL_HOST := $(call cargo_out,install)/release/saule-install
 # called VERSION: that is the kernel's own, and a variable given on the
 # command line reaches the kernel's build too.
 SYSTEM_VERSION ?= $(shell date +%Y.%m.%d.%H%M)
+# Told once, and the same to every make this one starts: the initramfs
+# and the folder of apps beside it are found by each other's version.
+SYSTEM_VERSION := $(SYSTEM_VERSION)
+export SYSTEM_VERSION
 # The key update files are signed with (`make update-key` makes one; its
 # public half is config/update.pub, built into saule-install), and the
 # update file `make update` makes.
@@ -223,7 +240,7 @@ ifeq ($(HOST_OS),Darwin)
   VNC_OPEN = open vnc://127.0.0.1:5901
 endif
 
-.PHONY: all kernel init session apps drivers initramfs test
+.PHONY: all kernel init session apps image-apps drivers initramfs test
 .PHONY: installer usb-image usb run-usb run-disk
 .PHONY: run run-gui run-vnc run-netbook run-vesa
 .PHONY: menuconfig check-config clean distclean
@@ -321,14 +338,15 @@ $(GEN_CPIO): $(KSRC)/Makefile
 	mkdir -p $(dir $@)
 	$(CC) -O2 -o $@ $(KSRC)/usr/gen_init_cpio.c
 
-# The session as one executable: bytecode, native packages and bundled files
-# packed into a copy of the saule runtime. Each app in APPS is built the same
-# way into /bin/apps, named after its project's `name:` (what the launcher
-# lists) rather than its folder: an app called "settings" is
-# /bin/apps/settings whatever its folder is called.
+# The session as one program: bytecode and bundled files, run by the
+# image's Saule (RUNTIME), which is this SAULE copied in with the native
+# packages it loads. Each app in APPS is built the same way into
+# /bin/apps, named after its project's `name:` (what the launcher lists)
+# rather than its folder: an app called "settings" is /bin/apps/settings
+# whatever its folder is called.
 session:
 	@test -n "$(SAULE)" || { echo "saule not found: install it or pass SAULE=/path/to/saule"; exit 1; }
-	$(SAULE) build $(APP) -o $(SESSION)
+	$(SAULE) build $(APP) -o $(SESSION) --shared=$(RUNTIME)
 
 # The graphics driver pack DRIVERS names, into build/drivers/<pack>: Mesa and
 # libdrm, built from source (needs meson, ninja, python3-mako and
@@ -348,14 +366,26 @@ apps:
 		$(SAULE) build $$app -o $(APPS_OUT)/$${name:-$$(basename $$app)} || exit 1; \
 	done
 
-initramfs: init session apps $(GEN_CPIO)
+# The apps as the image has them: run by its Saule, with no runtime of
+# their own.
+image-apps:
+	@test -n "$(SAULE)" || { echo "saule not found: install it or pass SAULE=/path/to/saule"; exit 1; }
+	mkdir -p $(IMAGE_APPS)
+	find $(IMAGE_APPS) -mindepth 1 -maxdepth 1 -type f -delete
+	for app in $(APPS); do \
+		name=$$(sed -n 's/^name: *"\(.*\)".*/\1/p' $$app/saule.config); \
+		$(SAULE) build $$app -o $(IMAGE_APPS)/$${name:-$$(basename $$app)} --shared=$(RUNTIME) || exit 1; \
+	done
+
+initramfs: init session image-apps $(GEN_CPIO)
 	@test "$(DEBUG)" != 1 -o -n "$(BUSYBOX)" || { echo "DEBUG=1 needs busybox (apt install busybox-static) or BUSYBOX=/path"; exit 1; }
 	@test "$(TOOLS)" != 1 -o -n "$(BUSYBOX)" || { echo "TOOLS=1 needs busybox (apt install busybox-static) or BUSYBOX=/path; TOOLS=0 builds without"; exit 1; }
 	STAGE=$(BUILD)/rootfs GEN_INIT_CPIO=$(GEN_CPIO) INIT=$(INIT) SESSION=$(SESSION) \
-	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) APPS_DIR=$(APPS_OUT) \
+	ROOTFS=rootfs BUSYBOX=$(INITRAMFS_BUSYBOX) TOOLS_BUSYBOX=$(INITRAMFS_TOOLS) \
+	APPS_DIR=$(if $(filter 1,$(ON_DISK)),,$(IMAGE_APPS)) SAULE_RUNTIME="$(SAULE)" \
 	NATIVE_LIBS="$(NATIVE_LIBS)" FONTS="$(FONTS)" FONTS_COMMON="$(FONTS_COMMON)" DRIVERS_DIR="$(DRIVERS_DIR)" \
 	FS_TOOLS="$(FS_TOOLS)" ZONEINFO="$(ZONEINFO)" \
-	SYSTEM="$(SYSTEM)" TASKS="$(TASKS)" PDF="$(PDF)" WIFI="$(WIFI_DIR)" ALSA="$(ALSA)" XKB="$(XKB)" \
+	SYSTEM="$(SYSTEM)" TASKS="$(TASKS)" PDF="$(if $(filter 1,$(ON_DISK)),,$(PDF))" WIFI="$(WIFI_DIR)" ALSA="$(ALSA)" XKB="$(XKB)" \
 	GRAPHICS_FIRMWARE="$(GRAPHICS_FIRMWARE)" PCI_IDS="$(PCI_IDS)" \
 	BLUETOOTH="$(BLUETOOTH_DIR)" INSTALL_TOOL="$(INSTALL_TOOL)" VERSION="$(SYSTEM_VERSION)" \
 	WALLPAPERS="$(wildcard $(WM)/wallpapers)" scripts/mkinitramfs.sh $(INITRAMFS)
@@ -366,13 +396,19 @@ initramfs: init session apps $(GEN_CPIO)
 
 installer:
 	@test -n "$(SAULE)" || { echo "saule not found: install it or pass SAULE=/path/to/saule"; exit 1; }
-	$(SAULE) build installer -o $(INSTALLER)
+	$(SAULE) build installer -o $(INSTALLER) --shared=$(RUNTIME)
 	cd install && cargo build --release --target x86_64-unknown-linux-musl
 	cd install && cargo build --release
 
 # The stick, as one file. On it, in an ext2 file system GRUB reads:
 #
 #   vmlinuz, initramfs.cpio.gz   the system, with no graphics driver pack
+#                                and no apps
+#   disk/<version>/bin/…         the apps (bin/apps/<name>) and what only
+#                                they run, read from the stick when opened
+#                                and not kept in memory: init mounts this
+#                                file system for them (init/src/disk.rs),
+#                                and the installer copies them to the disk
 #   installer.cpio.gz            the installer, unpacked over the system when
 #                                the stick starts: an installed system does
 #                                not carry it
@@ -388,7 +424,10 @@ installer:
 usb-image: kernel installer $(GEN_CPIO)
 	rm -rf $(USB)
 	mkdir -p $(USB)/root/grub $(USB)/root/drivers
-	$(MAKE) initramfs INITRAMFS=$(USB)/root/initramfs.cpio.gz DRIVERS=none
+	$(MAKE) initramfs INITRAMFS=$(USB)/root/initramfs.cpio.gz DRIVERS=none ON_DISK=1
+	mkdir -p $(USB)/root/disk/$(SYSTEM_VERSION)/bin/apps
+	cp $(IMAGE_APPS)/* $(USB)/root/disk/$(SYSTEM_VERSION)/bin/apps/
+	install -m 0755 $(PDF) $(USB)/root/disk/$(SYSTEM_VERSION)/bin/saule-pdf
 	cp $(BZIMAGE) $(USB)/root/vmlinuz
 	scripts/mkgrub.sh $(USB)/root/grub $(USB)/efi.img
 	STAGE=$(USB)/stage GEN_INIT_CPIO=$(GEN_CPIO) scripts/mkoverlay.sh $(USB)/root/installer.cpio.gz \
@@ -403,7 +442,7 @@ usb-image: kernel installer $(GEN_CPIO)
 	$(INSTALL_HOST) image $(USB_IMAGE) $(USB)/root --efi $(USB)/efi.img
 
 # An update file for systems already installed: the same kernel,
-# initramfs and driver packs as the stick, signed. Settings finds it on a
+# initramfs, apps and driver packs as the stick, signed. Settings finds it on a
 # drive that is plugged in or in Downloads, and installs it. Named for
 # the version the image inside it says it is.
 update: usb-image
@@ -518,7 +557,7 @@ run-vesa: all
 
 ifneq ($(HOST_OS),Darwin)
 clean:
-	rm -rf $(KOUT) $(BUILD)/rootfs $(BUILD)/tools $(INITRAMFS) $(SESSION)
+	rm -rf $(KOUT) $(BUILD)/rootfs $(BUILD)/tools $(INITRAMFS) $(SESSION) $(BUILD)/image-apps
 	rm -rf $(USB) $(INSTALLER) $(BUILD)/saule-linux.img $(BUILD)/saule-linux-qemu.img
 	cd init && cargo clean
 	cd install && cargo clean

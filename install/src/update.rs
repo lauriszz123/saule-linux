@@ -26,6 +26,28 @@
 //! initramfs of two versions for no longer than the two renames take.
 //! Of the driver packs, the one this machine has is replaced. The kernel
 //! options the machine starts with are left as they are.
+//!
+//! **The apps** are kept on the disk and not in memory
+//! (`../init/src/disk.rs`): `disk/<version>/` in the system's partition,
+//! beside the initramfs of that version. In an update they are the first
+//! part of the file called `initramfs.cpio.gz`, as an archive of their own
+//! that is not compressed (`cpio.rs`), with the initramfs after it:
+//!
+//! ```text
+//!   bin/apps/<name>…, bin/<name>…        the archive, to a whole 512 bytes
+//!   the initramfs, compressed            the rest
+//! ```
+//!
+//! Applying one unpacks the archive into `disk/<version>/` and keeps the
+//! rest as the initramfs. The folder is whole on the disk before the
+//! initramfs is replaced, and the one for the version running is left
+//! until a later update, so each initramfs finds its own apps whenever
+//! the power goes. The file is laid out so because an installed system
+//! is updated by the updater it has: one from before the apps were kept
+//! on the disk knows the four names above and no others, writes that
+//! file whole, and the kernel unpacks both parts into memory, where that
+//! system's apps always were. It keeps them on the disk from its next
+//! update on.
 
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -34,6 +56,7 @@ use std::path::{Path, PathBuf};
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use sha2::{Digest, Sha512};
 
+use crate::cpio;
 use crate::disks;
 use crate::layout::{self, SYSTEM_LABEL};
 use crate::sys::Mounted;
@@ -41,6 +64,11 @@ use crate::sys::Mounted;
 const MAGIC: &str = "SAULE-UPDATE 1";
 const SIGNATURE: u64 = 64;
 const TARGET_AT: &str = "/run/saule/update";
+/// The file the apps travel in front of, and where they are kept.
+const INITRAMFS: &str = "initramfs.cpio.gz";
+const DISK: &str = "disk";
+/// What the running system says its version is.
+const RELEASE: &str = "/etc/saule-release";
 
 /// The public half of the key updates are signed with, in hexadecimal.
 const PUBLIC: &str = include_str!("../../config/update.pub");
@@ -203,9 +231,24 @@ pub fn bundle(out: &Path, root: &Path, key_file: &Path, version: &str) -> io::Re
     packs.sort();
     names.extend(packs);
 
+    // The apps a stick keeps beside its initramfs, in front of it.
+    let apps = match root.join(DISK).is_dir() {
+        true if !root.join(DISK).join(version).is_dir() => {
+            return refuse(format!(
+                "{} has apps, but none for version {version}",
+                root.display()
+            ));
+        }
+        true => cpio::pack(&root.join(DISK).join(version))?,
+        false => Vec::new(),
+    };
+
     let mut head = format!("{MAGIC}\nversion {version}\n");
     for name in &names {
-        let length = fs::metadata(root.join(name))?.len();
+        let mut length = fs::metadata(root.join(name))?.len();
+        if name == INITRAMFS {
+            length += apps.len() as u64;
+        }
         head.push_str(&format!("file {name} {length}\n"));
     }
     head.push_str("end\n");
@@ -217,6 +260,10 @@ pub fn bundle(out: &Path, root: &Path, key_file: &Path, version: &str) -> io::Re
     hash.update(head.as_bytes());
     let mut buffer = vec![0u8; 1 << 20];
     for name in &names {
+        if name == INITRAMFS {
+            file.write_all(&apps)?;
+            hash.update(&apps);
+        }
         let mut source = File::open(root.join(name))?;
         loop {
             let read = source.read(&mut buffer)?;
@@ -282,8 +329,10 @@ pub fn apply(path: &Path) -> io::Result<()> {
     };
 
     println!("step write");
-    let target = Mounted::new(&device, Path::new(TARGET_AT), false)?;
-    let written = write_into(&mut file, &header, target.path());
+    // Init keeps this partition mounted, read only, for the apps on it.
+    let target = Mounted::writable(&device, Path::new(TARGET_AT))?;
+    let running = fs::read_to_string(RELEASE).unwrap_or_default();
+    let written = write_into(&mut file, &header, target.path(), running.trim());
     // SAFETY: a plain system call.
     unsafe { libc::sync() };
     target.unmount()?;
@@ -294,11 +343,25 @@ pub fn apply(path: &Path) -> io::Result<()> {
 
 /// Put the update's files in `target`, the system partition's folder:
 /// each written beside its old self and flushed, then all of them
-/// renamed into place.
-fn write_into(file: &mut File, header: &Header, target: &Path) -> io::Result<()> {
+/// renamed into place. The apps in front of the initramfs go into the
+/// folder for the update's version, which is in place before the
+/// initramfs is. `running` is the version of the system doing this,
+/// whose apps are left where they are.
+fn write_into(file: &mut File, header: &Header, target: &Path, running: &str) -> io::Result<()> {
     // The driver packs this machine has: those are replaced, no others
     // are added.
     let has_pack = |name: &str| target.join(name).is_file();
+    // A version is a folder's name here: an update that calls itself
+    // anything else brings no apps.
+    let named = !header.version.is_empty()
+        && header
+            .version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        && !header.version.starts_with('.');
+    let apps = target.join(DISK).join(&header.version);
+    let apps_part = target.join(DISK).join(format!("{}.new", header.version));
+    let mut brought_apps = false;
 
     let mut made: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut at = header.body_at;
@@ -312,8 +375,26 @@ fn write_into(file: &mut File, header: &Header, target: &Path) -> io::Result<()>
                 fs::create_dir_all(folder)?;
             }
             file.seek(SeekFrom::Start(at))?;
-            let mut out = File::create(&part)?;
             let mut left = *length;
+
+            // The apps, off the front of the initramfs.
+            if name == INITRAMFS && named {
+                let mut start = [0u8; 6];
+                let peeked = file.read(&mut start)?;
+                file.seek(SeekFrom::Start(at))?;
+                if cpio::begins(&start[..peeked]) {
+                    let _ = fs::remove_dir_all(&apps_part);
+                    let mut reader = BufReader::new(&mut *file);
+                    let read = cpio::unpack(&mut reader, left, &apps_part)
+                        .or_else(|_| refuse("The update file is damaged."))?;
+                    drop(reader);
+                    file.seek(SeekFrom::Start(at + read))?;
+                    left -= read;
+                    brought_apps = true;
+                }
+            }
+
+            let mut out = File::create(&part)?;
             while left > 0 {
                 let want = left.min(buffer.len() as u64) as usize;
                 file.read_exact(&mut buffer[..want])?;
@@ -326,11 +407,35 @@ fn write_into(file: &mut File, header: &Header, target: &Path) -> io::Result<()>
         at += length;
     }
 
+    // The apps first: an initramfs is never there before its own are. The
+    // running system's are the ones it has open, and an update to the
+    // version it already is brings the same.
+    if brought_apps {
+        if header.version == running && apps.is_dir() {
+            fs::remove_dir_all(&apps_part)?;
+        } else {
+            let _ = fs::remove_dir_all(&apps);
+            fs::rename(&apps_part, &apps)?;
+        }
+        File::open(target.join(DISK))?.sync_all()?;
+    }
     for (part, place) in &made {
         fs::rename(part, place)?;
     }
     fs::write(target.join("version"), format!("{}\n", header.version))?;
-    File::open(target)?.sync_all()
+    File::open(target)?.sync_all()?;
+
+    // Apps of versions that are neither running nor about to: an update
+    // before the last one's.
+    if brought_apps {
+        for folder in fs::read_dir(target.join(DISK))?.flatten() {
+            let name = folder.file_name();
+            if name != header.version.as_str() && name != running {
+                let _ = fs::remove_dir_all(folder.path());
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -386,7 +491,7 @@ mod tests {
         let header = check(&mut file, &public).unwrap();
         assert_eq!(header.version, "2026.11.25");
         assert_eq!(header.files.len(), 5);
-        write_into(&mut file, &header, &target).unwrap();
+        write_into(&mut file, &header, &target, "2026.11.01").unwrap();
 
         assert_eq!(fs::read(target.join("vmlinuz")).unwrap(), b"new kernel");
         assert_eq!(
@@ -414,6 +519,127 @@ mod tests {
         );
         // Nothing half-written is left.
         assert!(!target.join("vmlinuz.new").exists());
+        fs::remove_dir_all(work).unwrap();
+    }
+
+    /// A stick's folder with apps beside its initramfs, for `version`.
+    fn with_apps(work: &Path, version: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = work.join("root/disk").join(version).join("bin");
+        fs::create_dir_all(bin.join("apps")).unwrap();
+        fs::write(bin.join("apps/editor"), format!("editor {version}")).unwrap();
+        fs::write(bin.join("apps/files"), vec![3u8; 5000]).unwrap();
+        fs::write(bin.join("saule-pdf"), b"draws pages").unwrap();
+        for program in ["apps/editor", "apps/files", "saule-pdf"] {
+            fs::set_permissions(bin.join(program), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_apps_go_on_the_disk_and_the_rest_is_the_initramfs() {
+        use std::os::unix::fs::PermissionsExt;
+        let work = folder("apps");
+        fs::create_dir_all(work.join("root")).unwrap();
+        with_apps(&work, "2026.12.01");
+        let (update, public) = made(&work, "2026.12.01");
+
+        // Installed, two updates ago: the running system's apps, and
+        // those of the one before it.
+        let target = work.join("target");
+        for old in ["2026.10.01", "2026.11.01"] {
+            fs::create_dir_all(target.join("disk").join(old).join("bin/apps")).unwrap();
+            fs::write(target.join("disk").join(old).join("bin/apps/editor"), old).unwrap();
+        }
+        fs::write(target.join("vmlinuz"), b"old kernel").unwrap();
+        fs::write(target.join("initramfs.cpio.gz"), b"old initramfs").unwrap();
+
+        let mut file = File::open(&update).unwrap();
+        let header = check(&mut file, &public).unwrap();
+        write_into(&mut file, &header, &target, "2026.11.01").unwrap();
+
+        // The initramfs is the stick's own, with nothing in front of it.
+        assert_eq!(
+            fs::read(target.join("initramfs.cpio.gz")).unwrap(),
+            vec![7u8; 3_000_000]
+        );
+        let apps = target.join("disk/2026.12.01/bin");
+        assert_eq!(
+            fs::read(apps.join("apps/editor")).unwrap(),
+            b"editor 2026.12.01"
+        );
+        assert_eq!(fs::read(apps.join("apps/files")).unwrap().len(), 5000);
+        assert_eq!(fs::read(apps.join("saule-pdf")).unwrap(), b"draws pages");
+        let mode = fs::metadata(apps.join("apps/editor"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+        // The running system's apps stay; the ones before them go.
+        assert!(target.join("disk/2026.11.01/bin/apps/editor").exists());
+        assert!(!target.join("disk/2026.10.01").exists());
+        assert!(!target.join("disk/2026.12.01.new").exists());
+
+        // The same update again, by the system it made: its apps are the
+        // ones in use, and are left as they are.
+        fs::write(apps.join("apps/editor"), b"in use").unwrap();
+        write_into(&mut file, &header, &target, "2026.12.01").unwrap();
+        assert_eq!(fs::read(apps.join("apps/editor")).unwrap(), b"in use");
+        assert!(!target.join("disk/2026.11.01").exists());
+        assert!(!target.join("disk/2026.12.01.new").exists());
+        fs::remove_dir_all(work).unwrap();
+    }
+
+    #[test]
+    fn an_older_updater_takes_the_same_file_and_starts_it_whole() {
+        let work = folder("older");
+        fs::create_dir_all(work.join("root")).unwrap();
+        with_apps(&work, "2026.12.01");
+        let (update, public) = made(&work, "2026.12.01");
+
+        // Nothing in it but the names every updater has known.
+        let mut file = File::open(&update).unwrap();
+        let header = check(&mut file, &public).unwrap();
+        let names: Vec<&str> = header.files.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "vmlinuz",
+                "initramfs.cpio.gz",
+                "drivers.list",
+                "drivers/gen3.cpio.gz",
+                "drivers/intel.cpio.gz"
+            ]
+        );
+
+        // What such an updater writes as the initramfs: the file whole,
+        // which is two archives the kernel unpacks one after the other,
+        // the second starting on a whole four bytes.
+        let (_, length) = header.files[1];
+        let start = header.body_at + header.files[0].1;
+        let mut whole = vec![0u8; length as usize];
+        file.seek(SeekFrom::Start(start)).unwrap();
+        file.read_exact(&mut whole).unwrap();
+        let apps = cpio::pack(&work.join("root/disk/2026.12.01")).unwrap();
+        assert!(cpio::begins(&whole));
+        assert_eq!(apps.len() % 4, 0);
+        assert_eq!(&whole[..apps.len()], &apps[..]);
+        assert_eq!(&whole[apps.len()..], &vec![7u8; 3_000_000][..]);
+        fs::remove_dir_all(work).unwrap();
+    }
+
+    #[test]
+    fn apps_for_another_version_than_the_update_s_are_a_mistake() {
+        let work = folder("mismatch");
+        fs::create_dir_all(work.join("root")).unwrap();
+        with_apps(&work, "2026.12.01");
+        let root = work.join("root");
+        fs::create_dir_all(root.join("drivers")).unwrap();
+        fs::write(root.join("vmlinuz"), b"k").unwrap();
+        fs::write(root.join("initramfs.cpio.gz"), b"i").unwrap();
+        keygen(&work.join("update.key"), &work.join("update.pub")).unwrap();
+        let out = work.join("saule.update");
+        assert!(bundle(&out, &root, &work.join("update.key"), "2026.12.02").is_err());
+        assert!(bundle(&out, &root, &work.join("update.key"), "2026.12.01").is_ok());
         fs::remove_dir_all(work).unwrap();
     }
 

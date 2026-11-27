@@ -73,6 +73,7 @@ pub fn shutdown(request: Request) -> ! {
     }
     // Every process gone, the data disk can be let go of cleanly.
     crate::storage::unmount();
+    crate::disk::detach();
 
     // SAFETY: as above.
     unsafe {

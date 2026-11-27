@@ -41,7 +41,13 @@ pub fn wait_for(path: &Path) -> io::Result<()> {
 /// A file system mounted for as long as this lives.
 pub struct Mounted {
     at: PathBuf,
+    /// Mounted before this, read only, by somebody else: made writable
+    /// for as long as this lives, and read only again after.
+    borrowed: bool,
 }
+
+/// How every file system here is mounted, but for whether it is written.
+const MOUNT_FLAGS: libc::c_ulong = libc::MS_NOATIME | libc::MS_NOSUID | libc::MS_NODEV;
 
 impl Mounted {
     /// Mount the ext file system on `device` at `at`, made if it isn't
@@ -52,7 +58,7 @@ impl Mounted {
         let target = CString::new(at.as_os_str().as_encoded_bytes())?;
         // The kernel's ext4 driver reads ext2 as well.
         let fstype = CString::new("ext4")?;
-        let mut flags = libc::MS_NOATIME | libc::MS_NOSUID | libc::MS_NODEV;
+        let mut flags = MOUNT_FLAGS;
         if read_only {
             flags |= libc::MS_RDONLY;
         }
@@ -72,6 +78,24 @@ impl Mounted {
         }
         Ok(Mounted {
             at: at.to_path_buf(),
+            borrowed: false,
+        })
+    }
+
+    /// The ext file system on `device`, to be written to: mounted at `at`,
+    /// or, where it is mounted read only already (init keeps the system's
+    /// partition so, for the apps on it: ../init/src/disk.rs), made
+    /// writable where it is. One file system can't be mounted both ways
+    /// at once.
+    pub fn writable(device: &Path, at: &Path) -> io::Result<Mounted> {
+        let mounts = fs::read_to_string("/proc/mounts").unwrap_or_default();
+        let Some(there) = mounted_at(&mounts, device) else {
+            return Mounted::new(device, at, false);
+        };
+        remount(&there, false)?;
+        Ok(Mounted {
+            at: there,
+            borrowed: true,
         })
     }
 
@@ -88,6 +112,11 @@ impl Mounted {
     }
 
     fn release(&self) -> io::Result<()> {
+        if self.borrowed {
+            // SAFETY: a plain system call.
+            unsafe { libc::sync() };
+            return remount(&self.at, true);
+        }
         let target = CString::new(self.at.as_os_str().as_encoded_bytes())?;
         // SAFETY: plain system calls with a NUL-terminated path.
         let result = unsafe {
@@ -105,6 +134,38 @@ impl Drop for Mounted {
     fn drop(&mut self) {
         let _ = self.release();
     }
+}
+
+/// Change whether the file system mounted at `at` is written to.
+fn remount(at: &Path, read_only: bool) -> io::Result<()> {
+    let target = CString::new(at.as_os_str().as_encoded_bytes())?;
+    let mut flags = libc::MS_REMOUNT | MOUNT_FLAGS;
+    if read_only {
+        flags |= libc::MS_RDONLY;
+    }
+    // SAFETY: a NUL-terminated string that outlives the call.
+    let result = unsafe {
+        libc::mount(
+            std::ptr::null(),
+            target.as_ptr(),
+            std::ptr::null(),
+            flags,
+            std::ptr::null(),
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Where `device` is mounted, as `mounts` (`/proc/mounts`) has it.
+fn mounted_at(mounts: &str, device: &Path) -> Option<PathBuf> {
+    mounts.lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        let (source, at) = (words.next()?, words.next()?);
+        (Path::new(source) == device).then(|| PathBuf::from(at))
+    })
 }
 
 /// Whether anything on the disk called `name` is mounted: the disk itself
@@ -215,6 +276,16 @@ proc /proc proc rw 0 0
 /dev/sda2 /data ext4 rw 0 0
 /dev/nvme0n1p1 /mnt ext4 rw 0 0
 ";
+
+    #[test]
+    fn a_device_is_found_where_it_is_mounted() {
+        assert_eq!(
+            mounted_at(MOUNTS, Path::new("/dev/sda2")),
+            Some(PathBuf::from("/data"))
+        );
+        assert_eq!(mounted_at(MOUNTS, Path::new("/dev/sda1")), None);
+        assert_eq!(mounted_at(MOUNTS, Path::new("/dev/sda")), None);
+    }
 
     #[test]
     fn a_disk_is_in_use_when_any_of_it_is_mounted() {

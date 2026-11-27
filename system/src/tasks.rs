@@ -168,11 +168,7 @@ impl Sampler {
             per_second: if per_second > 0 { per_second as f64 } else { 100.0 },
             page_kb: if page > 0 { page as u64 / 1024 } else { 4 },
             users: users(&fs::read_to_string("/etc/passwd").unwrap_or_default()),
-            apps: std::env::var("SAULE_APPS")
-                .ok()
-                .and_then(|folder| fs::canonicalize(folder).ok())
-                .map(|folder| folder.to_string_lossy().into_owned())
-                .unwrap_or_else(|| APPS.to_string()),
+            apps: apps_folder(std::env::var("SAULE_APPS").ok()),
         }
     }
 
@@ -409,19 +405,53 @@ fn processes(page_kb: u64) -> Vec<Process> {
             .filter(|w| !w.is_empty())
             .map(|w| String::from_utf8_lossy(w).into_owned())
             .collect();
-        // The program itself where it may be read (one's own processes);
-        // else what it was started as.
-        process.program = fs::read_link(format!("{folder}/exe"))
-            .map(|p| p.to_string_lossy().into_owned())
-            .ok()
-            .or_else(|| words.first().cloned())
-            .unwrap_or_default();
-        process.name = named(&process.name, &words);
+        // A Saule program is what Saule was given to run, not the Saule
+        // that runs it, which is every app's alike. Any other: the program
+        // itself where it may be read (one's own processes); else what it
+        // was started as.
+        let words = match saule_program(&words) {
+            Some(own) => {
+                process.program = own[0].clone();
+                own
+            }
+            None => {
+                process.program = fs::read_link(format!("{folder}/exe"))
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .ok()
+                    .or_else(|| words.first().cloned())
+                    .unwrap_or_default();
+                &words[..]
+            }
+        };
+        process.name = named(&process.name, words);
         process.command = words.join(" ");
         out.push(process);
     }
     out.sort_by_key(|p| p.pid);
     out
+}
+
+/// The apps' folder as the file system has it: `named`, or else
+/// [`APPS`], which on a stick and an installed system is a link to where
+/// the apps are kept on the disk. Programs are known by where they are.
+fn apps_folder(named: Option<String>) -> String {
+    let folder = named.unwrap_or_else(|| APPS.to_string());
+    match fs::canonicalize(&folder) {
+        Ok(real) => real.to_string_lossy().into_owned(),
+        Err(_) => folder,
+    }
+}
+
+/// The words a Saule program was started with, itself first, out of the
+/// words of its process: `/bin/saule run /bin/apps/editor notes.txt` is
+/// `/bin/apps/editor notes.txt`. The apps are built without a runtime of
+/// their own, and the system starts each as the one Saule running it.
+fn saule_program(words: &[String]) -> Option<&[String]> {
+    let [saule, run, own @ ..] = words else {
+        return None;
+    };
+    let base = saule.rsplit('/').next().unwrap_or(saule);
+    (base == "saule" && run == "run" && !own.is_empty()).then_some(own)
 }
 
 /// What a process is called: the kernel's name for it (`short`, its
@@ -608,6 +638,20 @@ mod tests {
         assert_eq!(kinds[&301], 'p');
         assert_eq!(kinds[&302], 'p');
         assert_eq!(kinds[&40], 'k');
+    }
+
+    #[test]
+    fn a_saule_program_is_the_file_saule_was_given_to_run() {
+        let words = |text: &str| text.split(' ').map(str::to_string).collect::<Vec<_>>();
+        let started = words("/bin/saule run /bin/apps/task-manager --all");
+        let own = saule_program(&started).expect("a Saule program");
+        assert_eq!(own, &words("/bin/apps/task-manager --all")[..]);
+        // Called by its whole name, where the kernel keeps fifteen letters.
+        assert_eq!(named("task-manager", own), "task-manager");
+        assert_eq!(saule_program(&words("/bin/saule run")), None);
+        assert_eq!(saule_program(&words("/bin/saule check src")), None);
+        assert_eq!(saule_program(&words("/bin/sh run /bin/apps/files")), None);
+        assert_eq!(saule_program(&words("/usr/bin/top")), None);
     }
 
     #[test]

@@ -370,6 +370,12 @@ impl System {
         if let Some(pack) = &pack {
             files.push(overlay(pack));
         }
+        // The apps, which stay on the disk and are read from there
+        // (../init/src/disk.rs): the folder for the stick's version.
+        let mut apps = Vec::new();
+        collect(medium, Path::new(APPS), &mut apps);
+        apps.sort();
+        files.extend(apps);
 
         let options = fs::read_to_string(medium.join("cmdline"))
             .map(|text| text.trim().to_string())
@@ -402,6 +408,8 @@ impl System {
             }
             let mut source = File::open(self.medium.join(file))?;
             let mut out = File::create(&to)?;
+            // A program stays one.
+            out.set_permissions(source.metadata()?.permissions())?;
             loop {
                 let count = source.read(&mut buffer)?;
                 if count == 0 {
@@ -429,6 +437,24 @@ impl System {
         )?;
         say("copied 100");
         Ok(())
+    }
+}
+
+/// Where the apps are, on the stick and on the disk.
+const APPS: &str = "disk";
+
+/// Every file under `under` in `medium`, by its path from `medium`.
+fn collect(medium: &Path, under: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(medium.join(under)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = under.join(entry.file_name());
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => collect(medium, &path, out),
+            Ok(kind) if kind.is_file() => out.push(path.to_string_lossy().into_owned()),
+            _ => {}
+        }
     }
 }
 
@@ -466,6 +492,15 @@ mod tests {
         let medium = stick("copy-from");
         let target = folder("copy-to");
 
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let bin = medium.join("disk/2026.12.01/bin");
+            fs::create_dir_all(bin.join("apps")).unwrap();
+            fs::write(bin.join("apps/editor"), b"an app").unwrap();
+            fs::write(bin.join("saule-pdf"), b"a tool").unwrap();
+            fs::set_permissions(bin.join("apps/editor"), fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
         let system = System::on(&medium).unwrap();
         assert_eq!(system.options, "quiet console=tty1");
         system.copy_to(&target).unwrap();
@@ -478,6 +513,23 @@ mod tests {
         assert_eq!(
             fs::read(target.join("grub/core.img")).unwrap().len(),
             30_000
+        );
+        // The apps, where they are on the stick, and still programs.
+        assert_eq!(
+            fs::read(target.join("disk/2026.12.01/bin/apps/editor")).unwrap(),
+            b"an app"
+        );
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(target.join("disk/2026.12.01/bin/apps/editor"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o755);
+        }
+        assert_eq!(
+            fs::read(target.join("disk/2026.12.01/bin/saule-pdf")).unwrap(),
+            b"a tool"
         );
         // Not the stick's, which starts the installer.
         assert_eq!(

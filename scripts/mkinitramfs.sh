@@ -12,6 +12,12 @@
 #   INIT           the init binary — becomes /init
 #   SESSION        the session, built with `saule build` — becomes
 #                  /bin/session
+#   SAULE_RUNTIME  optional: the saule that the session and the apps run
+#                  on, when they were built without one of their own
+#                  (`saule build --shared=/bin/saule`) — becomes
+#                  /bin/saule, with NATIVE_LIBS in its home,
+#                  /usr/lib/saule/native_packages, which init names to
+#                  every program as SAULE_HOME
 #   ROOTFS         files copied over the tree as they are (etc/, …)
 #   BUSYBOX        optional: a BusyBox binary — adds /bin/sh and the usual
 #                  tools (debug images)
@@ -20,12 +26,14 @@
 #                  Unlike BUSYBOX it adds no /bin/sh, so init's fallback
 #                  stays as it is
 #   NATIVE_LIBS    optional: native Saule packages (.so) the session may
-#                  load. They travel inside the session; what goes in the
-#                  tree is the shared libraries *they* need.
+#                  load. With SAULE_RUNTIME they go in its home, once for
+#                  every program; without, they travel inside each. Either
+#                  way the shared libraries *they* need go in the tree.
 #   FS_TOOLS       optional: mke2fs and e2fsck (e2fsprogs), installed in
 #                  /sbin: what init makes and checks the data disk with
 #   APPS_DIR       optional: a directory of apps built with `saule build`,
-#                  installed as /bin/apps/<name>
+#                  installed as /bin/apps/<name>. Not given for a stick,
+#                  which keeps them as files beside the initramfs
 #   DRIVERS_DIR    optional: a graphics driver pack (scripts/build-drivers.sh,
 #                  build/drivers/<pack>): Mesa and libdrm, installed over any
 #                  copies of the same libraries brought in for programs.
@@ -118,6 +126,20 @@ fi
 for library in $NATIVE_LIBS; do
     add_libraries "$library"
 done
+
+# The Saule the image's programs share, and the native packages it loads
+# for them. Named but not there is a mistake: no program would start.
+if [ -n "${SAULE_RUNTIME:-}" ]; then
+    if [ ! -f "$SAULE_RUNTIME" ]; then
+        echo "mkinitramfs.sh: SAULE_RUNTIME=$SAULE_RUNTIME does not exist" >&2
+        exit 1
+    fi
+    add_program "$SAULE_RUNTIME" /bin/saule
+    mkdir -p "$STAGE/usr/lib/saule/native_packages"
+    for library in $NATIVE_LIBS; do
+        install -m 0755 "$library" "$STAGE/usr/lib/saule/native_packages/$(basename "$library")"
+    done
+fi
 
 # What init makes and checks the data disk's file system with.
 for tool in $FS_TOOLS; do

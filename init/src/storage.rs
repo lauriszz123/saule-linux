@@ -307,9 +307,17 @@ fn on_usb(path: &Path) -> bool {
     })
 }
 
-/// Every disk and partition with an ext file system labelled [`LABEL`].
+/// The first disk or partition with an ext file system labelled [`LABEL`].
 fn labelled() -> Option<PathBuf> {
-    let entries = fs::read_dir("/sys/class/block").ok()?;
+    labelled_as(LABEL).into_iter().next()
+}
+
+/// Every disk and partition with an ext file system labelled `label`, in
+/// the order of their names.
+pub fn labelled_as(label: &str) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir("/sys/class/block") else {
+        return Vec::new();
+    };
     let mut names: Vec<String> = entries
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -319,7 +327,8 @@ fn labelled() -> Option<PathBuf> {
     names
         .into_iter()
         .map(|n| Path::new("/dev").join(n))
-        .find(|device| ext_label(device).as_deref() == Some(LABEL))
+        .filter(|device| ext_label(device).as_deref() == Some(label))
+        .collect()
 }
 
 /// The label of the ext file system on `device`, if it has one.
